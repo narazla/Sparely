@@ -3,8 +3,6 @@
 
 ### Sparely
 *Just Enough, Just In Time.*
-
-AI-Powered Platform for Spare Part Intelligence & Inventory Optimization
 </div>
 
 <br>
@@ -14,7 +12,7 @@ AI-Powered Platform for Spare Part Intelligence & Inventory Optimization
 
 <div align="center">
 
-**[Live Demo](https://sparely-caliber2026.vercel.app)** · **[AI Research Repository](https://github.com/narazla/sparepart-optimizer)** · **[Documentation](#documentation)**
+**[Live Demo](https://sparely-caliber2026.vercel.app)** · **[AI Research Repository](https://github.com/narazla/sparepart-optimizer)** 
 
 </div>
 
@@ -22,7 +20,7 @@ AI-Powered Platform for Spare Part Intelligence & Inventory Optimization
 
 **Sparely** helps maintenance, inventory, procurement and management teams at a petrochemical plant keep the right spare parts in stock. It reads six SAP-style extracts, forecasts every spare part's demand by its cause (planned maintenance, equipment failure, turnaround), warns early which parts will be needed with a machine-learning model, and recalculates each part's Min, Max and safety stock by weighing holding cost against downtime risk. The result is not a dashboard but a worklist: one decision per part (reorder, transfer, reduce, monitor or maintain) that flows from the planner to procurement to management.
 
-> *"Most tools forecast what you used. Sparely prepares you for what's coming — and proves it."*
+> *"Most tools forecast what you used. Sparely prepares you for what's coming, and proves it."*
 
 ### Design principles
 
