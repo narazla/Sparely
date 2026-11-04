@@ -43,6 +43,8 @@ export default async function Start() {
     ["Cost–risk optimization scenarios (raise / lower inventory)", "/scenario", "Cost–Risk Scenarios", "Presets + live re-optimization of all parts + efficient frontier + replay under the scenario"],
     ["Shutdown and turnaround activities", "/workspace/maintenance", "Maintenance", `Last turnaround found in the data (${num(Number(meta.tam_parts))} parts); readiness for the next one with order-by dates`],
     ["Right part available at the right time (the core problem)", "/health", "Inventory Health", `${num(pf.transfer.parts)} needs covered by the same item held under another material number · ${idr(pf.transfer.valueAvoided)} not bought`],
+    ["Equipment and spare part criticality, incl. process safety", "/recommendations?tag=sce", "Material List", `${num(pf.governance.sce)} safety-critical parts (safety and shutdown valves) costed as class A and never left without a spare · ${num(pf.governance.longLead)} long-lead critical parts flagged`],
+    ["Governed decisions", "/workspace/management", "Management", `${num(pf.governance.signoffBuys)} buys and ${num(pf.governance.signoffReductions)} reductions need Management sign-off; every decision is logged`],
     ["Evidence that the policy works", "/workspace/management", "Management", `Replay of ${num(S.demandDays)} real demand days: ${num(S.criticalStockouts)} → ${num(A.criticalStockouts)} stockouts on critical parts`],
     ["Key Q1 — predictability of irregular demand", "/forecast", "Demand Forecast", "Demand split by cause, installed-base pooling, ML early warning, out-of-time backtests"],
     ["Key Q2 — balance inventory cost, availability, operational risk", "/scenario", "Cost–Risk Scenarios", "Per-part service level chosen by minimum holding + downtime-risk cost"],
@@ -52,7 +54,7 @@ export default async function Start() {
   const expedite = expediteList(p).length;
   const tiles = [
     { id: "maintenance", icon: Wrench, value: num(jobsShort), label: "jobs in the next 90 days with missing parts" },
-    { id: "planner", icon: ClipboardCheck, value: num(pf.actions.Reorder + pf.actions.Transfer), label: `reorders and transfers to review (${num(pf.urgentCritical)} critical)` },
+    { id: "planner", icon: ClipboardCheck, value: num(pf.actions.Reorder + pf.actions.Transfer), label: `reorders and transfers to review (${num(pf.urgentCritical)} critical reorders)` },
     { id: "procurement", icon: ShoppingBag, value: num(expedite), label: "open POs to expedite" },
     { id: "management", icon: Factory, value: idr(pf.excessValuePo), label: "excess stock to release (PO prices)" },
   ] as const;
@@ -62,7 +64,7 @@ export default async function Start() {
       <PageHeader title="Spare Parts Planning — Overview" subtitle="Most tools forecast what you used. Sparely prepares you for what's coming — and proves it." />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Stat label="Reorder now" value={num(pf.actions.Reorder)} hint={`${num(pf.urgentCritical)} critical (A/B) · ${idr(pf.reorderValue)}`} tone="critical" />
+        <Stat label="Reorder now" value={num(pf.actions.Reorder)} hint={`${num(pf.urgentCritical)} critical (A/B or SCE) · ${idr(pf.reorderValue)}`} tone="critical" />
         <Stat label="Covered by identical stock" value={num(pf.transfer.parts)} hint={`${idr(pf.transfer.valueAvoided)} not bought`} tone="good" />
         <Stat label="Excess to release" value={idr(pf.excessValuePo)} hint={`${num(pf.actions.Reduce)} materials · at PO prices`} />
         <Stat label="Stockouts in replay (May–Sep 26)" value={`${num(S.stockouts)} → ${num(A.stockouts)}`} hint={`Current Min–Max → Sparely policy · critical ${num(S.criticalStockouts)} → ${num(A.criticalStockouts)}`} tone="good" />

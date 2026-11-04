@@ -6,7 +6,15 @@ export interface RecFilter {
   crit?: string;
   q?: string;
   sort?: string;
+  /** sce = safety-critical, longlead = long-lead, signoff = needs Management sign-off */
+  tag?: string;
 }
+
+export const TAGS: Record<string, { label: string; fn: (r: Recommendation) => boolean }> = {
+  sce: { label: "Safety-critical (SCE)", fn: (r) => r.sce },
+  longlead: { label: "Long-lead", fn: (r) => r.long_lead },
+  signoff: { label: "Needs Management sign-off", fn: (r) => r.requires_approval },
+};
 
 export const SORTS: Record<string, { label: string; fn: (a: Recommendation, b: Recommendation) => number }> = {
   priority: { label: "Priority", fn: (a, b) => b.priority - a.priority },
@@ -25,6 +33,7 @@ export function filterRecs(recs: Recommendation[], f: RecFilter): Recommendation
       (!f.action || r.action === f.action) &&
       (!f.health || r.health === f.health) &&
       (!crits || crits.includes(r.criticality)) &&
+      (!f.tag || !TAGS[f.tag] || TAGS[f.tag].fn(r)) &&
       (!q || r.description.toLowerCase().includes(q) || String(r.material_no).includes(q) || r.category.toLowerCase().includes(q))
   );
   return out.sort((SORTS[f.sort ?? "priority"] ?? SORTS.priority).fn);
@@ -38,6 +47,9 @@ export function toCsv(recs: Recommendation[]): string {
     ["action", (r) => r.action],
     ["urgency", (r) => r.urgency ?? ""],
     ["health", (r) => r.health],
+    ["safety_critical", (r) => (r.sce ? 1 : 0)],
+    ["long_lead", (r) => (r.long_lead ? 1 : 0)],
+    ["needs_management_signoff", (r) => (r.requires_approval ? 1 : 0)],
     ["stock", (r) => r.stock],
     ["on_order", (r) => r.on_order],
     ["current_min", (r) => r.current_min],

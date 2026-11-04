@@ -31,6 +31,8 @@ export interface MaterialRow {
   lt_p80: number;
   /** units issued on turnaround orders during the last turnaround window (0 if not in its scope) */
   tam_qty: number;
+  /** safety or shutdown valve locations (SCE tags) the part is installed on; > 0 = safety-critical element */
+  n_funcloc_sce: number;
   /** ML early warning: probability of any demand in the next 90 days */
   p_demand_90d: number;
   supplier_code: number | null;
@@ -138,6 +140,14 @@ export interface Recommendation {
   transfer_from: number[];
   twin_count: number;
   health: Health;
+  /** safety-critical element: installed on a safety or shutdown valve */
+  sce: boolean;
+  /** stocked only because of the safety-critical minimum spare (the cost model alone would buy on demand) */
+  safety_floor: boolean;
+  /** critical part whose observed lead time makes emergency buying too slow */
+  long_lead: boolean;
+  /** the recommended buy or reduction needs Management sign-off (see rules.ts) */
+  requires_approval: boolean;
   flags: string[];
   reasons: string[];
   priority: number;

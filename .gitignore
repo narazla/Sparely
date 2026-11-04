@@ -42,3 +42,7 @@ next-env.d.ts
 
 # internal notes and local temp folders
 caliber juara.txt
+.deck
+
+.vercel
+.env*

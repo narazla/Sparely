@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Check, Download, RotateCcw, Undo2, X } from "lucide-react";
-import { downloadCsv, useDecisions, type DecisionKind } from "./decisions";
+import { downloadCsv, effective, useDecisionLog, useDecisions, type Decision, type DecisionKind } from "./decisions";
 import { date, idr, num, qty as fq } from "@/lib/format";
+import { APPROVAL_LIMIT_IDR, needsSignoff } from "@/lib/rules";
+import { Chip } from "./ui";
 
 export interface DecisionRow {
   material_no: number;
@@ -14,7 +16,19 @@ export interface DecisionRow {
   qty?: number;
   need_by?: string;
   badge?: string;
+  /** extra labels such as "SCE" or "Long-lead" */
+  tags?: string[];
+  /** unit price of a buy: value = qty × price */
+  price?: number;
+  /** fixed value of the decision (stock released by a reduction) */
+  value?: number;
+  sce?: boolean;
+  /** why the system proposes it, kept in the decision log */
+  reason?: string;
 }
+
+const rowValue = (r: DecisionRow, q: number | undefined) => r.value ?? (q ?? 0) * (r.price ?? 0);
+const limitText = `above ${idr(APPROVAL_LIMIT_IDR)}`;
 
 const btn = "btn btn-secondary btn-sm";
 
@@ -48,8 +62,17 @@ export function DecisionList({ kind, role, rows, columns, approveLabel = "Approv
   const shown = list.slice(page * pageSize, page * pageSize + pageSize);
   useEffect(() => setPage(0), [tab]);
 
+  const approve = (r: DecisionRow, q: number | undefined) => {
+    const value = rowValue(r, q);
+    decide({
+      kind, material_no: r.material_no, status: "approved", qty: q, need_by: r.need_by, role, source,
+      description: r.description, value, reason: r.reason, sce: r.sce,
+      signoff: needsSignoff(kind, value, !!r.sce) ? "pending" : undefined,
+    });
+  };
+  const reject = (r: DecisionRow) => decide({ kind, material_no: r.material_no, status: "rejected", role, source, description: r.description, reason: r.reason, sce: r.sce });
   const approveAll = () => {
-    for (const r of shown) decide({ kind, material_no: r.material_no, status: "approved", qty: edits[r.material_no] ?? r.qty, need_by: r.need_by, role, source });
+    for (const r of shown) approve(r, edits[r.material_no] ?? r.qty);
   };
 
   return (
@@ -95,7 +118,9 @@ export function DecisionList({ kind, role, rows, columns, approveLabel = "Approv
             <tbody>
               {shown.map((r) => {
                 const s = status(r.material_no);
-                const q = edits[r.material_no] ?? decisions[`${kind}:${r.material_no}`]?.qty ?? r.qty;
+                const d = decisions[`${kind}:${r.material_no}`];
+                const q = edits[r.material_no] ?? d?.qty ?? r.qty;
+                const gated = !s && needsSignoff(kind, rowValue(r, q), !!r.sce);
                 return (
                   <tr key={r.material_no}>
                     <td>
@@ -103,6 +128,8 @@ export function DecisionList({ kind, role, rows, columns, approveLabel = "Approv
                         <span title={`Criticality ${r.crit}`} className={`inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-sm px-1 text-[11px] font-bold ${r.crit === "A" || r.crit === "B" ? "bg-ink text-white" : "border border-line text-ink-2"}`}>{r.crit}</span>
                         <Link href={`/materials/${r.material_no}`} className="tabular font-semibold text-accent hover:underline">{r.material_no}</Link>
                         {r.badge && <span className="rounded-sm border border-line bg-surface-2 px-1.5 py-px text-[11px] font-semibold text-ink-2">{r.badge}</span>}
+                        {r.tags?.map((t) => <Chip key={t} tone={t === "SCE" ? "critical" : "serious"}>{t}</Chip>)}
+                        {gated && <span title={r.sce && kind === "reduce" ? "Reducing a safety-critical part needs Management sign-off" : `Value ${limitText} needs Management sign-off`}><Chip tone="accent">Needs sign-off</Chip></span>}
                       </span>
                       <div className="max-w-80 truncate text-xs text-muted" title={r.description}>{r.description}</div>
                     </td>
@@ -118,15 +145,17 @@ export function DecisionList({ kind, role, rows, columns, approveLabel = "Approv
                     <td className="text-right">
                       {s ? (
                         <span className="inline-flex items-center gap-2">
-                          <span className={`text-xs font-semibold ${s === "approved" ? "text-good-ink" : "text-critical-ink"}`}>{s === "approved" ? "Approved" : "Rejected"}</span>
+                          <span className={`text-xs font-semibold ${s === "approved" && d?.signoff !== "rejected" ? (d?.signoff === "pending" ? "text-accent-ink" : "text-good-ink") : "text-critical-ink"}`}>
+                            {s === "rejected" ? "Rejected" : d?.signoff === "pending" ? "Awaiting Management" : d?.signoff === "approved" ? "Signed off" : d?.signoff === "rejected" ? "Refused by Management" : "Approved"}
+                          </span>
                           <button onClick={() => undo(kind, r.material_no)} className={btn} title="Undo"><Undo2 size={13} aria-hidden /></button>
                         </span>
                       ) : (
                         <span className="inline-flex gap-1.5">
-                          <button onClick={() => decide({ kind, material_no: r.material_no, status: "approved", qty: q, need_by: r.need_by, role, source })} className="btn btn-accept btn-sm">
+                          <button onClick={() => approve(r, q)} className="btn btn-accept btn-sm">
                             <Check size={13} aria-hidden /> {approveLabel}
                           </button>
-                          <button onClick={() => decide({ kind, material_no: r.material_no, status: "rejected", role, source })} className="btn btn-reject btn-sm">
+                          <button onClick={() => reject(r)} className="btn btn-reject btn-sm">
                             <X size={13} aria-hidden /> Reject
                           </button>
                         </span>
@@ -156,14 +185,18 @@ interface PrLine {
   price_source: string; value: number; lead_time_days: number; late_risk: boolean; single_source: boolean; criticality: string; source: string;
 }
 
+const isBuy = (d: Decision) => (d.kind === "reorder" || d.kind === "request" || d.kind === "tam" || d.kind === "insurance") && (d.qty ?? 0) > 0;
+
 /** Procurement: approved buys from the planner and the maintenance team become PR lines. */
 export function PrQueue() {
   const { decisions } = useDecisions();
   const [lines, setLines] = useState<PrLine[]>([]);
   const [loading, setLoading] = useState(false);
+  const waiting =Object.values(decisions).filter((d) => isBuy(d) && d.status === "approved" && d.signoff === "pending");
   const items = useMemo(
     () => Object.values(decisions)
-      .filter((d) => d.status === "approved" && (d.kind === "reorder" || d.kind === "request" || d.kind === "tam" || d.kind === "insurance") && (d.qty ?? 0) > 0)
+      // a buy above the approval limit joins the draft only after Management signs it off
+      .filter((d) => effective(d) && isBuy(d))
       .map((d) => ({
         material_no: d.material_no,
         qty: d.qty!,
@@ -186,15 +219,25 @@ export function PrQueue() {
   }, [items]);
   const total = lines.reduce((a, l) => a + l.value, 0);
 
+  const waitNote = waiting.length > 0 && (
+    <p className="mb-3 text-xs text-ink-2">
+      {num(waiting.length)} approved buy{waiting.length > 1 ? "s" : ""} worth {idr(waiting.reduce((a, d) => a + (d.value ?? 0), 0))} {waiting.length > 1 ? "are" : "is"} waiting for{" "}
+      <Link href="/workspace/management" className="text-accent hover:underline">Management sign-off</Link> (value {limitText}) and will join the draft once signed off.
+    </p>
+  );
   if (!items.length)
     return (
-      <p className="py-6 text-center text-sm text-muted">
-        No approved buys yet. Approve reorders in the <Link href="/workspace/planner" className="text-accent hover:underline">Planner</Link> workspace or request job parts in the{" "}
-        <Link href="/workspace/maintenance" className="text-accent hover:underline">Maintenance</Link> workspace — they land here as PR lines.
-      </p>
+      <div>
+        {waitNote}
+        <p className="py-6 text-center text-sm text-muted">
+          No approved buys yet. Approve reorders in the <Link href="/workspace/planner" className="text-accent hover:underline">Planner</Link> workspace or request job parts in the{" "}
+          <Link href="/workspace/maintenance" className="text-accent hover:underline">Maintenance</Link> workspace — they land here as PR lines.
+        </p>
+      </div>
     );
   return (
     <div>
+      {waitNote}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm text-ink-2">{loading ? "Building PR lines…" : <><b className="text-ink">{num(lines.length)}</b> PR lines · <b className="text-ink">{idr(total)}</b> · {num(lines.filter((l) => l.late_risk).length)} cannot arrive by the need date</>}</span>
         <button
@@ -237,7 +280,7 @@ export function PrQueue() {
 
 interface Impact {
   approved: number; rejected: number; orders: { count: number; value: number; critical: number }; transfers: { count: number; valueAvoided: number }; released: { count: number; value: number };
-  params: number; insurance: number; riskAvoided: number; downtimeEventsAvoided: number;
+  params: number; insurance: number; riskAvoided: number; downtimeEventsAvoided: number; awaitingSignoff: number;
 }
 
 /** Management: what the decisions taken so far change. */
@@ -260,7 +303,7 @@ export function ImpactPanel() {
   return (
     <div>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {tile("Decisions taken", imp ? num(imp.approved + imp.rejected) : "…", imp ? `${num(imp.approved)} approved · ${num(imp.rejected)} rejected` : "")}
+        {tile("Decisions taken", imp ? num(imp.approved + imp.rejected + imp.awaitingSignoff) : "…", imp ? `${num(imp.approved)} in effect · ${num(imp.awaitingSignoff)} awaiting sign-off · ${num(imp.rejected)} rejected` : "")}
         {tile("Purchases committed", imp ? idr(imp.orders.value) : "…", imp ? `${num(imp.orders.count)} parts, ${num(imp.orders.critical)} critical (A/B) · ${idr(imp.transfers.valueAvoided)} avoided by ${num(imp.transfers.count)} transfers` : "")}
         {tile("Working capital released", imp ? idr(imp.released.value) : "…", imp ? `${num(imp.released.count)} excess positions approved for reduction` : "")}
         {tile("Downtime risk removed / yr", imp ? idr(imp.riskAvoided) : "…", imp ? `${num(imp.downtimeEventsAvoided, 2)} expected production stops avoided before the next replenishment` : "")}
@@ -271,6 +314,115 @@ export function ImpactPanel() {
           <RotateCcw size={13} aria-hidden /> Reset demo decisions
         </button>
       </div>
+    </div>
+  );
+}
+
+const KIND_LABEL: Record<DecisionKind, string> = {
+  reorder: "Reorder", transfer: "Transfer", request: "Job-part request", tam: "Turnaround buy", param: "Min–Max update", reduce: "Reduction", insurance: "Insurance spare",
+};
+const ROLE_LABEL: Record<string, string> = { planner: "Inventory Planner", maintenance: "Maintenance", procurement: "Procurement", management: "Management" };
+const stamp = (iso: string) => new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+
+/** Management: buys above the approval limit and reductions of safety-critical parts wait here before they take effect. */
+export function SignoffQueue() {
+  const { decisions, signoff } = useDecisions();
+  const all = Object.values(decisions);
+  const pending = all.filter((d) => d.status === "approved" && d.signoff === "pending").sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+  const decided = all.filter((d) => d.signoff === "approved" || d.signoff === "rejected").length;
+  if (!pending.length)
+    return (
+      <p className="py-6 text-center text-sm text-muted">
+        Nothing waiting. Buys {limitText} and every reduction of a safety-critical part land here once a workspace approves them{decided ? ` · ${num(decided)} already signed off or refused` : ""}.
+      </p>
+    );
+  return (
+    <div className="-mx-4 overflow-x-auto">
+      <table className="dtable w-full min-w-[760px] border-collapse text-[13px]">
+        <thead>
+          <tr>{["Part", "Decision", "Approved by", "Qty", "Value", "Why sign-off", "Sign-off"].map((h, i) => <th key={h} className={i === 3 || i === 4 || i === 6 ? "text-right" : "text-left"}>{h}</th>)}</tr>
+        </thead>
+        <tbody>
+          {pending.map((d) => (
+            <tr key={d.id}>
+              <td>
+                <span className="flex items-center gap-2">
+                  <Link href={`/materials/${d.material_no}`} className="tabular font-semibold text-accent hover:underline">{d.material_no}</Link>
+                  {d.sce && <Chip tone="critical">SCE</Chip>}
+                </span>
+                <div className="max-w-64 truncate text-xs text-muted" title={d.description}>{d.description}</div>
+              </td>
+              <td className="text-xs">{KIND_LABEL[d.kind]}<div className="max-w-72 truncate text-muted" title={d.reason}>{d.reason}</div></td>
+              <td className="text-xs">{ROLE_LABEL[d.role] ?? d.role}<div className="text-muted">{stamp(d.at)}</div></td>
+              <td className="tabular text-right">{d.qty != null ? fq(d.qty) : "–"}</td>
+              <td className="tabular text-right">{idr(d.value ?? 0)}</td>
+              <td className="text-xs">{d.kind === "reduce" && d.sce ? "Reduces a safety-critical part" : `Value ${limitText}`}</td>
+              <td className="text-right">
+                <span className="inline-flex gap-1.5">
+                  <button onClick={() => signoff(d.id, true)} className="btn btn-accept btn-sm"><Check size={13} aria-hidden /> Sign off</button>
+                  <button onClick={() => signoff(d.id, false)} className="btn btn-reject btn-sm"><X size={13} aria-hidden /> Refuse</button>
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Management: the audit trail of every decision taken in this browser, exportable for review. */
+export function DecisionLog() {
+  const entries = useDecisionLog();
+  const [page, setPage] = useState(0);
+  const size = 12;
+  const list = useMemo(() => [...entries].reverse(), [entries]);
+  const pages = Math.max(1, Math.ceil(list.length / size));
+  const shown = list.slice(page * size, page * size + size);
+  if (!list.length)
+    return <p className="py-6 text-center text-sm text-muted">No decisions logged yet. Every approve, reject, undo and sign-off in any workspace is recorded here with role, time, quantity, value and reason.</p>;
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm text-ink-2"><b className="text-ink">{num(list.length)}</b> entries, newest first · nothing is overwritten</span>
+        <button
+          className={btn}
+          onClick={() =>
+            downloadCsv("decision-log.csv", ["timestamp", "role", "decision_type", "material_no", "description", "event", "qty", "value_idr", "reason"],
+              list.map((e) => [e.at, ROLE_LABEL[e.role] ?? e.role, KIND_LABEL[e.kind], e.material_no, e.description, e.event, e.qty ?? "", e.value != null ? Math.round(e.value) : "", e.reason ?? ""]))
+          }
+        >
+          <Download size={13} aria-hidden /> Export log (CSV)
+        </button>
+      </div>
+      <div className="-mx-4 overflow-x-auto">
+        <table className="dtable w-full min-w-[760px] border-collapse text-[13px]">
+          <thead>
+            <tr>{["Time", "Role", "Decision", "Part", "Event", "Qty", "Value", "Reason"].map((h, i) => <th key={h} className={i === 5 || i === 6 ? "text-right" : "text-left"}>{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {shown.map((e, i) => (
+              <tr key={`${e.at}-${i}`}>
+                <td className="whitespace-nowrap text-xs">{stamp(e.at)}</td>
+                <td className="text-xs">{ROLE_LABEL[e.role] ?? e.role}</td>
+                <td className="text-xs">{KIND_LABEL[e.kind]}</td>
+                <td><Link href={`/materials/${e.material_no}`} className="tabular font-semibold text-accent hover:underline">{e.material_no}</Link></td>
+                <td className="text-xs">{e.event}</td>
+                <td className="tabular text-right">{e.qty != null ? fq(e.qty) : "–"}</td>
+                <td className="tabular text-right">{e.value != null ? idr(e.value) : "–"}</td>
+                <td className="max-w-80 truncate text-xs text-muted" title={e.reason}>{e.reason ?? ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {pages > 1 && (
+        <div className="mt-3 flex items-center justify-between text-xs text-muted">
+          <button disabled={page === 0} onClick={() => setPage(page - 1)} className="btn btn-ghost btn-sm">‹ Newer</button>
+          <span>{num(page * size + 1)}–{num(Math.min(list.length, (page + 1) * size))} of {num(list.length)}</span>
+          <button disabled={page >= pages - 1} onClick={() => setPage(page + 1)} className="btn btn-ghost btn-sm">Older ›</button>
+        </div>
+      )}
     </div>
   );
 }

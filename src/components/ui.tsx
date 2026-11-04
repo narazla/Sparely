@@ -11,7 +11,9 @@ import {
   Hourglass,
   Info,
   PackageX,
+  ShieldAlert,
   ShieldCheck,
+  Timer,
   ShoppingCart,
   Snail,
   type LucideIcon,
@@ -148,6 +150,17 @@ export function CritChip({ crit }: { crit: Crit }) {
     >
       {crit}
     </span>
+  );
+}
+
+/** Safety-critical element and long-lead labels (see rules.ts). */
+export function SafetyChips({ sce, longLead }: { sce: boolean; longLead: boolean }) {
+  if (!sce && !longLead) return null;
+  return (
+    <>
+      {sce && <span title="Installed on a safety or shutdown valve: costed as class A, always keeps a spare, reductions need Management sign-off"><Chip tone="critical" icon={ShieldAlert}>Safety-critical</Chip></span>}
+      {longLead && <span title="Critical part with an observed lead time over 90 days: emergency buying cannot prevent downtime"><Chip tone="serious" icon={Timer}>Long-lead</Chip></span>}
+    </>
   );
 }
 

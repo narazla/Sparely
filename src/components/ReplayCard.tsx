@@ -39,7 +39,8 @@ export function ReplayCard({ r, compact = false }: { r: ReplayResult; compact?: 
         <>
           <h3 className="mb-1 mt-5 text-sm font-semibold">Inventory value held each day</h3>
           <ReplayChart data={r.daily} />
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          {/* tables bleed 1rem into the card padding on both sides, so the columns need a wider gap than that */}
+          <div className="mt-4 grid gap-4 lg:grid-cols-2 lg:gap-x-10">
             <div>
               <h3 className="mb-2 text-sm font-semibold">Stockouts by criticality</h3>
               <Table>

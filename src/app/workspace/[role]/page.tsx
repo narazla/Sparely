@@ -4,14 +4,15 @@ import { ArrowRight } from "lucide-react";
 import { HBars } from "@/components/charts";
 import { ReplayCard } from "@/components/ReplayCard";
 import { Card, Chip, CritChip, MaterialLink, Note, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
-import { DecisionList, ImpactPanel, PrQueue, type DecisionRow } from "@/components/workspace";
+import { DecisionList, DecisionLog, ImpactPanel, PrQueue, SignoffQueue, type DecisionRow } from "@/components/workspace";
+import { APPROVAL_LIMIT_IDR } from "@/lib/rules";
 import { asOf, getMaterial, getMeta, getRecommendations, mlCalibration, mlMetrics, portfolio } from "@/lib/data";
 import { ML_WARNING } from "@/lib/engine";
 import { date, idr, num, pct, qty } from "@/lib/format";
 import { replay } from "@/lib/replay";
 import { roleById, type Role } from "@/lib/roles";
 import { currentParams } from "@/lib/server-params";
-import { CRIT_RANK, isCritical, type Params } from "@/lib/types";
+import { CRIT_RANK, isCritical, type Params, type Recommendation } from "@/lib/types";
 import { departmentSummary, expediteList, insuranceGaps, jobReadiness, mlWarnings, supplierRisk, supplierStats, tamReadiness } from "@/lib/workflow";
 
 export const dynamic = "force-dynamic";
@@ -41,6 +42,11 @@ function Step({ n, title, subtitle, children, aside }: { n: number; title: strin
   );
 }
 
+/** Safety and lead-time labels shown next to the part in every worklist. */
+const tagsOf = (r: Pick<Recommendation, "sce" | "long_lead">) => [r.sce ? "SCE" : "", r.long_lead ? "Long-lead" : ""].filter(Boolean);
+const reasonOf = (r: Recommendation, start: string) => r.reasons.find((x) => x.startsWith(start)) ?? r.reasons[0];
+const LIMIT = idr(APPROVAL_LIMIT_IDR);
+
 const nextLink = (href: string, label: string) => (
   <Link href={href} className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline">
     {label} <ArrowRight size={13} aria-hidden />
@@ -60,24 +66,29 @@ function Planner({ p }: { p: Params }) {
   const reduces = recs.filter((r) => r.action === "Reduce").sort((a, b) => b.excess_value - a.excess_value);
 
   const transferRows: DecisionRow[] = transfers.map((r) => ({
-    material_no: r.material_no, description: r.description, crit: r.criticality, qty: r.transfer_qty,
-    badge: r.action === "Transfer" ? "No purchase needed" : `then buy ${qty(r.order_qty)}`,
+    material_no: r.material_no, description: r.description, crit: r.criticality, qty: r.transfer_qty, tags: tagsOf(r), sce: r.sce,
+    badge: r.action === "Transfer" ? "No purchase needed" : `then buy ${qty(r.order_qty)}`, reason: reasonOf(r, "Identical part"),
     cells: [qty(r.stock), r.transfer_from.join(", "), qty(r.reorder_point), pct(r.stockout_risk), idr(r.transfer_qty * r.price)],
   }));
   const reorderRows: DecisionRow[] = reorders.slice(0, CAP).map((r) => ({
-    material_no: r.material_no, description: r.description, crit: r.criticality, qty: r.order_qty,
-    badge: r.urgency === "Critical" ? "Critical" : r.ml_warning ? "ML warning" : undefined,
+    material_no: r.material_no, description: r.description, crit: r.criticality, qty: r.order_qty, price: r.price, sce: r.sce, tags: tagsOf(r),
+    badge: r.urgency === "Critical" ? "Critical" : r.safety_floor ? "Safety spare" : r.ml_warning ? "ML warning" : undefined,
+    reason: r.safety_floor ? reasonOf(r, "Buying on demand") : reasonOf(r, "On hand"),
     cells: [qty(r.stock), qty(r.on_order), qty(r.reorder_point), pct(r.stockout_risk), idr(r.order_value)],
   }));
   const paramRows: DecisionRow[] = params.slice(0, CAP).map((r) => ({
-    material_no: r.material_no, description: r.description, crit: r.criticality,
+    material_no: r.material_no, description: r.description, crit: r.criticality, tags: tagsOf(r), sce: r.sce,
     badge: r.flags.find((f) => f.startsWith("Convert"))?.replace("Convert to ", "→ "),
+    reason: `Min / Max ${qty(r.current_min)} / ${qty(r.current_max)} → ${r.stocked ? `${qty(r.reorder_point)} / ${qty(r.max_level)}` : "0 / 0 (buy on demand)"}`,
     cells: [`${qty(r.current_min)} / ${qty(r.current_max)}`, r.stocked ? `${qty(r.reorder_point)} / ${qty(r.max_level)}` : "0 / 0", r.stocked ? qty(r.safety_stock) : "–", r.stocked ? pct(r.service_level, 1) : "buy on demand"],
   }));
   const reduceRows: DecisionRow[] = reduces.slice(0, CAP).map((r) => ({
-    material_no: r.material_no, description: r.description, crit: r.criticality, badge: r.health,
+    material_no: r.material_no, description: r.description, crit: r.criticality, badge: r.health, tags: tagsOf(r), sce: r.sce, value: r.excess_value,
+    reason: reasonOf(r, "Stock "),
     cells: [qty(r.stock), r.stocked ? qty(r.max_level) : "0", qty(r.excess_qty), idr(r.excess_value)],
   }));
+  const signoffReorders = reorders.filter((r) => r.requires_approval).length;
+  const signoffReduces = reduces.filter((r) => r.requires_approval).length;
 
   return (
     <>
@@ -90,14 +101,14 @@ function Planner({ p }: { p: Params }) {
       <Step n={1} title="Use identical stock before buying" subtitle="The part is needed, but the same item (identical description and unit) is held under another material number above that number's own reorder point. Transfer or substitute instead of buying.">
         <DecisionList kind="transfer" role="planner" rows={transferRows} columns={["On hand", "Transfer from", "Rec. Min", "Stockout risk", "Purchase avoided"]} qtyLabel="Transfer qty" approveLabel="Transfer" empty="No need can be covered by identical stock." />
       </Step>
-      <Step n={2} title="Approve reorders" subtitle="Inventory position (on hand + on order) at or below the dynamic reorder point. Quantities already exclude identical stock. Approved lines go to Procurement." aside={nextLink("/workspace/procurement", "Procurement queue")}>
+      <Step n={2} title="Approve reorders" subtitle={`Inventory position (on hand + on order) at or below the dynamic reorder point. Quantities already exclude identical stock. Approved lines go to Procurement; buys above ${LIMIT} (${num(signoffReorders)} today) first need Management sign-off. Safety-critical (SCE) parts always keep at least one spare.`} aside={nextLink("/workspace/procurement", "Procurement queue")}>
         <DecisionList kind="reorder" role="planner" source="Planner reorder" rows={reorderRows} columns={["On hand", "On order", "Rec. Min", "Stockout risk", "Value"]} qtyLabel="Order qty" approveLabel="Approve" />
         {reorders.length > CAP && <Note>Top {CAP} of {num(reorders.length)} by priority; the full list is in Recommendations.</Note>}
       </Step>
       <Step n={3} title="Approve dynamic Min–Max updates" subtitle="Replace static parameters with the recommended reorder point (Min) and Max. Approved changes download as a list for the ERP (e.g. SAP MM02).">
         <DecisionList kind="param" role="planner" rows={paramRows} columns={["Today Min / Max", "Rec. Min / Max", "Safety stock", "Service level"]} approveLabel="Approve" exportName="min-max-updates.csv" />
       </Step>
-      <Step n={4} title="Approve excess reductions" subtitle="Stop replenishing and run down, return or transfer stock above the recommended maximum. Released value is reported to Management." aside={nextLink("/workspace/management", "Management impact")}>
+      <Step n={4} title="Approve excess reductions" subtitle={`Stop replenishing and run down, return or transfer stock above the recommended maximum. Released value is reported to Management. Reductions above ${LIMIT} or of a safety-critical part (${num(signoffReduces)} today) need Management sign-off; an SCE part never goes below its minimum spare.`} aside={nextLink("/workspace/management", "Management impact")}>
         <DecisionList kind="reduce" role="planner" rows={reduceRows} columns={["On hand", "Rec. Max", "Excess qty", "Excess value"]} approveLabel="Reduce" exportName="excess-reductions.csv" />
       </Step>
     </>
@@ -111,10 +122,15 @@ function TurnaroundReadiness({ p, date: tamDate }: { p: Params; date: string }) 
   const t = tamReadiness(p, tamDate);
   const rows: DecisionRow[] = t.lines
     .filter((l) => l.shortfall > 0)
-    .map((l) => ({
-      material_no: l.material_no, description: l.description, crit: l.criticality, qty: l.shortfall, need_by: tamDate, badge: l.status,
-      cells: [`${qty(l.need)} ${l.unit}`, qty(l.available), qty(l.shortfall), date(l.order_by), idr(l.shortfall_value)],
-    }));
+    .map((l) => {
+      const m = getMaterial(l.material_no);
+      return {
+        material_no: l.material_no, description: l.description, crit: l.criticality, qty: l.shortfall, need_by: tamDate, badge: l.status,
+        price: m?.price_idr ?? 0, sce: (m?.n_funcloc_sce ?? 0) > 0, tags: (m?.n_funcloc_sce ?? 0) > 0 ? ["SCE"] : undefined,
+        reason: `Last turnaround used ${qty(l.need)} ${l.unit}; ${qty(l.shortfall)} short on ${date(tamDate)}, order by ${date(l.order_by)}`,
+        cells: [`${qty(l.need)} ${l.unit}`, qty(l.available), qty(l.shortfall), date(l.order_by), idr(l.shortfall_value)],
+      };
+    });
   return (
     <Step
       n={2}
@@ -154,20 +170,29 @@ function Maintenance({ p, tam }: { p: Params; tam: string }) {
     }
   const requestRows: DecisionRow[] = [...byMat.entries()]
     .sort((a, b) => a[1].first.localeCompare(b[1].first))
-    .map(([id, a]) => ({
-      material_no: id, description: a.desc, crit: getMaterial(id)?.criticality ?? "C", qty: a.short, need_by: a.first,
-      cells: [`${qty(a.need)} ${a.unit}`, qty(a.short), date(a.first), num(a.jobs)],
-    }));
+    .map(([id, a]) => {
+      const m = getMaterial(id);
+      const sce = (m?.n_funcloc_sce ?? 0) > 0;
+      return {
+        material_no: id, description: a.desc, crit: m?.criticality ?? "C", qty: a.short, need_by: a.first,
+        price: m?.price_idr ?? 0, sce, tags: sce ? ["SCE"] : undefined,
+        reason: `${qty(a.short)} ${a.unit} short for ${num(a.jobs)} planned job(s), first due ${date(a.first)}`,
+        cells: [`${qty(a.need)} ${a.unit}`, qty(a.short), date(a.first), num(a.jobs)],
+      };
+    });
   const warn = mlWarnings(p).filter((r) => !byMat.has(r.material_no));
   const warnRows: DecisionRow[] = warn.slice(0, CAP).map((r) => {
     const m = getMaterial(r.material_no)!;
     return {
       material_no: r.material_no, description: r.description, crit: r.criticality, qty: Math.max(1, Math.ceil(m.size_mean)),
+      price: r.price, sce: r.sce, tags: tagsOf(r),
+      reason: `ML early warning: ${pct(r.p_demand_90d)} probability of demand in the next 90 days, nothing on hand or on order`,
       cells: [pct(r.p_demand_90d), qty(m.size_mean), `${Math.round(r.lead_time_days)} d`, m.last_issue ? date(m.last_issue) : "never"],
     };
   });
   const gaps = insuranceGaps(p);
   const gapsCritical = gaps.filter((r) => isCritical(r.criticality)).length;
+  const sceGaps = getRecommendations(p).filter((r) => r.sce && r.health === "Insurance gap" && r.action === "Reorder").length;
   // hit rate of the early-warning threshold, read from the stored hold-out calibration
   const calib = mlCalibration();
   const above = calib.filter((c) => Number(c.bin.match(/[\d.]+/)?.[0] ?? 0) >= ML_WARNING - 1e-9);
@@ -177,6 +202,8 @@ function Maintenance({ p, tam }: { p: Params; tam: string }) {
   // an insurance spare protects against the first failure: keep the reorder-point level, not a full order cycle
   const gapRows: DecisionRow[] = gaps.slice(0, CAP).map((r) => ({
     material_no: r.material_no, description: r.description, crit: r.criticality, qty: Math.max(1, r.reorder_point),
+    price: r.price, tags: tagsOf(r),
+    reason: "Never issued in 17 months and not in stock; the failure rate of its equipment makes a spare cheaper than the downtime risk",
     cells: [num(getMaterial(r.material_no)?.n_funcloc_critical ?? 0), qty(r.annual_demand), `${Math.round(r.lead_time_days)} d`, idr(r.price)],
   }));
 
@@ -219,7 +246,7 @@ function Maintenance({ p, tam }: { p: Params; tam: string }) {
         <DecisionList kind="request" role="maintenance" source="ML early warning" rows={warnRows} columns={["P(needed, 90 d)", "Typical issue", "Lead time", "Last issued"]} qtyLabel="Request qty" approveLabel="Request" empty="No early warnings without cover." />
       </Step>
 
-      <Step n={4} title="Insurance spare review" subtitle="Parts never issued in 17 months and not in stock, critical (A/B) first. Their demand comes from the failure rate of the equipment they sit on; the cost model says holding the reorder-point level is cheaper than the downtime risk. Confirm before buying.">
+      <Step n={4} title="Insurance spare review" subtitle={`Parts never issued in 17 months and not in stock, critical (A/B) first. Their demand comes from the failure rate of the equipment they sit on; the cost model says holding the reorder-point level is cheaper than the downtime risk. Confirm before buying. Safety-critical (SCE) parts are not reviewed here: they always keep a spare, so their gaps (${num(sceGaps)}) are already Planner reorders.`}>
         <DecisionList kind="insurance" role="maintenance" source="Insurance spare" rows={gapRows} columns={["Critical FuncLocs", "Expected demand / yr", "Lead time", "Unit price"]} qtyLabel="Keep qty" approveLabel="Keep" empty="No unprotected critical parts." />
       </Step>
 
@@ -271,16 +298,26 @@ function Management({ p }: { p: Params }) {
         <Stat label="Reorder now" value={num(pf.actions.Reorder)} hint={`${num(pf.urgentCritical)} critical · ${idr(pf.reorderValue)}`} tone="critical" />
         <Stat label="Covered by identical stock" value={num(pf.transfer.parts)} hint={`${idr(pf.transfer.valueAvoided)} not bought: same item under another material number`} tone="good" />
       </div>
-      <Step n={1} title="Impact of the team's decisions" subtitle="Live total of everything approved in the Planner, Maintenance and Procurement workspaces (this browser).">
+      <Step n={1} title="Impact of the team's decisions" subtitle="Live total of everything approved in the Planner, Maintenance and Procurement workspaces (this browser). A decision that needs sign-off counts only once it is signed off.">
         <ImpactPanel />
+      </Step>
+      <Step
+        n={2}
+        title="Pending approval"
+        subtitle={`Buys above ${LIMIT} and every reduction of a safety-critical part take effect only after Management signs them off. Today's recommendations hold ${num(pf.governance.signoffBuys)} such buys and ${num(pf.governance.signoffReductions)} such reductions; once a workspace approves one, it waits here.`}
+      >
+        <SignoffQueue />
+      </Step>
+      <Step n={3} title="Decision log" subtitle="Audit trail of every approve, reject, undo and sign-off: role, time, quantity, value and the reason the system gave. Export it for review.">
+        <DecisionLog />
       </Step>
       <div className="mt-4">
         <ReplayCard r={r} />
       </div>
-      <Step n={2} title="Inventory health" subtitle="Number of spare parts in each status" aside={nextLink("/health", "Inventory Health")}>
+      <Step n={4} title="Inventory health" subtitle="Number of spare parts in each status" aside={nextLink("/health", "Inventory Health")}>
         <HBars data={pf.health.map((h) => ({ label: h.status, value: h.count }))} />
       </Step>
-      <Step n={3} title="By owning department (Purchasing Group)" subtitle="Purchasing Group = the department that owns the part (confirmed by the organizers). Taken from each part's own PO history; parts never purchased take their category's dominant group.">
+      <Step n={5} title="By owning department (Purchasing Group)" subtitle="Purchasing Group = the department that owns the part (confirmed by the organizers). Taken from each part's own PO history; parts never purchased take their category's dominant group.">
         <Table>
           <thead><tr><Th>Department</Th><Th right>Parts</Th><Th right>From PO history</Th><Th right>Reorders</Th><Th right>Reorder value</Th><Th right>Excess to release</Th><Th right>Transfers</Th></tr></thead>
           <tbody>
@@ -291,7 +328,7 @@ function Management({ p }: { p: Params }) {
         </Table>
         <Note>{num(depts.reduce((a, d) => a + d.fromPo, 0))} of {num(pf.materials)} parts have an owning department from PO history; the rest are inferred from their category. Excess values include category-estimated prices.</Note>
       </Step>
-      <Step n={4} title="Where the actions are" subtitle="Open work per workspace" aside={nextLink("/scenario", "Change the cost–risk policy")}>
+      <Step n={6} title="Where the actions are" subtitle="Open work per workspace" aside={nextLink("/scenario", "Change the cost–risk policy")}>
         <div className="grid gap-3 md:grid-cols-3">
           {[
             { href: "/workspace/planner", t: "Inventory Planner", v: `${num(pf.actions.Transfer + pf.transfer.partialReorders)} transfers · ${num(pf.actions.Reorder)} reorders · ${num(pf.actions.Reduce)} reductions` },

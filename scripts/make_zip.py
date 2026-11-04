@@ -8,8 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RAW = ROOT.parent / "Supporting Data"
 OUT = ROOT.parent / "submission" / "sparely-source.zip"
-SKIP_DIRS = {"node_modules", ".next", ".git", ".vercel", "__pycache__", "raw-data"}
-SKIP_FILES = {"caliber juara.txt"}  # internal team notes, not part of the submission
+SKIP_DIRS = {"node_modules", ".next", ".git", ".vercel", "__pycache__", "raw-data", ".deck"}
+SKIP_FILES = {"caliber juara.txt", ".env.local"}  # internal team notes and the local Vercel token are not part of the submission
 
 OUT.parent.mkdir(exist_ok=True)
 n = 0

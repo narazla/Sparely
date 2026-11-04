@@ -10,8 +10,9 @@ import { currentParams } from "@/lib/server-params";
 import { date } from "@/lib/format";
 
 export const metadata: Metadata = {
-  title: "Sparely",
+  title: { default: "Sparely", template: "%s · Sparely" },
   description: "Sparely — AI-powered spare part demand forecasting and dynamic inventory optimization (CALIBER 2026 Final Case).",
+  applicationName: "Sparely",
 };
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -23,7 +24,8 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         {/* shell bar */}
         <header className="sticky top-0 z-30 flex h-12 items-center gap-3 bg-shell px-3 text-shell-ink md:px-4">
           <Link href="/" className="flex shrink-0 items-center gap-2.5">
-            <span className="flex h-7 w-7 items-center justify-center rounded-sm bg-accent text-[15px] font-bold text-white">S</span>
+            {/* eslint-disable-next-line @next/next/no-img-element -- small static logo, no optimisation needed */}
+            <img src="/sparely-logo.png" alt="" width={18} height={28} className="h-7 w-auto" />
             <span className="text-[15px] font-semibold text-white">Sparely</span>
             <span className="hidden h-5 w-px bg-white/25 sm:block" />
             <span className="hidden text-[13px] text-shell-ink/80 sm:block">Spare Parts Planning</span>

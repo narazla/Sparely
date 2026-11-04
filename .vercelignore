@@ -3,3 +3,5 @@ caliber juara.txt
 .next
 node_modules
 pipeline/__pycache__
+.deck
+.env.local

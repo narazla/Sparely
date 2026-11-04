@@ -14,6 +14,7 @@ import "server-only";
 import { all, one } from "./db";
 import { calibrateImpact, choosePolicy, context, type PlannedEvent } from "./engine";
 import { DEFAULT_PARAMS } from "./params";
+import { SCE_FUNCLOC_SQL } from "./rules";
 import { CRITS, isCritical, type Crit, type MaterialRow, type Params } from "./types";
 
 interface ReplayRow {
@@ -34,6 +35,7 @@ interface ReplayRow {
   mu_day: number;
   var_day: number;
   planned_qty_12m: number;
+  n_funcloc_sce: number;
 }
 
 export interface PolicyResult {
@@ -80,7 +82,12 @@ function load() {
       l.push([r.day, r.qty]);
       demand.set(r.material_no, l);
     }
-    data = { rows: all<ReplayRow>("SELECT * FROM replay_material"), planned, demand, meta };
+    // the safety-critical rule follows the installed equipment, which does not change over time
+    const rows = all<ReplayRow>(
+      `SELECT r.*, COALESCE(s.n, 0) n_funcloc_sce FROM replay_material r
+       LEFT JOIN (SELECT material_no, COUNT(DISTINCT funcloc) n FROM material_funcloc WHERE ${SCE_FUNCLOC_SQL} GROUP BY 1) s USING (material_no)`
+    );
+    data = { rows, planned, demand, meta };
   }
   return data;
 }

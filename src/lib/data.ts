@@ -2,6 +2,7 @@ import "server-only";
 import { all, one } from "./db";
 import { calibrateImpact, costCurve, frontierPoint, IMPACT_WEIGHT, recommend, type PlannedEvent } from "./engine";
 import { DEFAULT_PARAMS } from "./params";
+import { needsSignoff, SCE_FUNCLOC_SQL, SCE_MIN_SPARE } from "./rules";
 import { CRITS, isCritical, type Action, type Crit, type Health, type MaterialRow, type Params, type Recommendation } from "./types";
 
 let materials: MaterialRow[] | null = null;
@@ -20,7 +21,9 @@ export const asOf = () => getMeta().as_of;
 export function getMaterials(): MaterialRow[] {
   if (!materials)
     materials = all<MaterialRow>(
-      "SELECT m.*, COALESCE(t.tam_qty, 0) tam_qty FROM material m LEFT JOIN tam_scope t USING (material_no)"
+      `SELECT m.*, COALESCE(t.tam_qty, 0) tam_qty, COALESCE(s.n, 0) n_funcloc_sce
+       FROM material m LEFT JOIN tam_scope t USING (material_no)
+       LEFT JOIN (SELECT material_no, COUNT(DISTINCT funcloc) n FROM material_funcloc WHERE ${SCE_FUNCLOC_SQL} GROUP BY 1) s USING (material_no)`
     );
   return materials;
 }
@@ -59,6 +62,13 @@ export function getImpact() {
   return impact;
 }
 
+/** Safety-critical locations found by the SCE tag rule, and how many of them the FuncLoc list rates S (lowest). */
+export function sceLocations() {
+  return one<{ locations: number; rated_s: number; rated_ab: number }>(
+    `SELECT COUNT(*) locations, SUM(criticality = 'S') rated_s, SUM(criticality IN ('A','B')) rated_ab FROM funcloc WHERE ${SCE_FUNCLOC_SQL}`
+  )!;
+}
+
 export const downtimeProbabilities = () => {
   const s = getImpact().scale;
   return (Object.keys(IMPACT_WEIGHT) as Crit[]).map((k) => ({ crit: k, prob: Math.min(1, IMPACT_WEIGHT[k] * s) }));
@@ -88,7 +98,8 @@ function applyIdenticalStock(recs: Recommendation[], day: string) {
   const twins = getTwins();
   const byId = new Map(recs.map((r) => [r.material_no, r]));
   const spare = new Map<number, number>();
-  const available = (t: Recommendation) => Math.max(0, Math.floor(t.stock - (t.stocked ? t.reorder_point : 0)));
+  // a safety-critical twin never gives away its own minimum spare
+  const available = (t: Recommendation) => Math.max(0, Math.floor(t.stock - (t.stocked ? Math.max(t.reorder_point, t.sce ? SCE_MIN_SPARE : 0) : 0)));
   for (const r of recs) {
     const t = twins.get(r.material_no);
     if (!t) continue;
@@ -143,6 +154,9 @@ export function getRecommendations(p: Params): Recommendation[] {
     const scale = getImpact().scale;
     recs = getMaterials().map((m) => recommend(m, planned.get(m.material_no), p, day, scale));
     applyIdenticalStock(recs, day);
+    for (const r of recs)
+      r.requires_approval =
+        (r.action === "Reorder" && needsSignoff("reorder", r.order_value, r.sce)) || (r.action === "Reduce" && needsSignoff("reduce", r.excess_value, r.sce));
     if (recCache.size > 16) recCache.delete(recCache.keys().next().value!);
     recCache.set(key, recs);
   }
@@ -167,6 +181,8 @@ export interface Portfolio {
   health: { status: Health; count: number; value: number }[];
   byCriticality: { crit: Crit; materials: number; stockValue: number; reorder: number; atRisk: number }[];
   stockedChange: { toStock: number; toNonStock: number };
+  /** safety-critical parts, the spares bought only for safety, long-lead parts and decisions that need sign-off */
+  governance: { sce: number; sceReorders: number; sceReorderValue: number; sceFloorOnly: number; longLead: number; signoffBuys: number; signoffReductions: number };
 }
 
 const HEALTH_ORDER: Health[] = [
@@ -202,7 +218,20 @@ export function portfolio(p: Params): Portfolio {
     toNonStock = 0;
   const cur = { holding: 0, risk: 0, stockouts: 0, downtimeEvents: 0, total: 0 };
   const rec = { holding: 0, risk: 0, stockouts: 0, downtimeEvents: 0, total: 0 };
+  const gov = { sce: 0, sceReorders: 0, sceReorderValue: 0, sceFloorOnly: 0, longLead: 0, signoffBuys: 0, signoffReductions: 0 };
   recs.forEach((r, i) => {
+    if (r.sce) gov.sce++;
+    if (r.sce && r.action === "Reorder") {
+      gov.sceReorders++;
+      gov.sceReorderValue += r.order_value;
+    }
+    // stocked only because of the minimum spare: the cost model alone would buy on demand
+    if (r.safety_floor) gov.sceFloorOnly++;
+    if (r.long_lead) gov.longLead++;
+    if (r.requires_approval) {
+      if (r.action === "Reduce") gov.signoffReductions++;
+      else gov.signoffBuys++;
+    }
     const value = r.stock * r.price;
     currentStockValue += value;
     if (mats[i].price_source === "PO history") {
@@ -219,7 +248,8 @@ export function portfolio(p: Params): Portfolio {
       transfer.valueAvoided += r.transfer_qty * r.price;
       if (r.action === "Reorder") transfer.partialReorders++;
     }
-    if (r.urgency === "Critical") urgentCritical++;
+    // critical reorders only; transfers that replaced a critical reorder keep their urgency but buy nothing
+    if (r.urgency === "Critical" && r.action === "Reorder") urgentCritical++;
     const isCrit = isCritical(r.criticality);
     if (isCrit && r.stocked && r.stockout_risk >= 0.5) criticalAtRisk++;
     if (r.flags.includes("Convert to Stock Item")) toStock++;
@@ -264,6 +294,7 @@ export function portfolio(p: Params): Portfolio {
     health: HEALTH_ORDER.filter((s) => health.has(s)).map((s) => ({ status: s, ...health.get(s)! })),
     byCriticality: CRITS.map((k) => ({ crit: k, ...(crit.get(k) ?? { materials: 0, stockValue: 0, reorder: 0, atRisk: 0 }) })),
     stockedChange: { toStock, toNonStock },
+    governance: gov,
   };
 }
 

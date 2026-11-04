@@ -1,5 +1,8 @@
 import { Card, Note, PageHeader, Table, Td, Th } from "@/components/ui";
-import { assumptions, dataGaps, dataQuality, downtimeProbabilities, getImpact, getMeta, getRecommendations, portfolio, suppliers, tableCounts } from "@/lib/data";
+import { Download } from "lucide-react";
+import { assumptions, dataGaps, dataQuality, downtimeProbabilities, getImpact, getMeta, getRecommendations, portfolio, sceLocations, suppliers, tableCounts } from "@/lib/data";
+import { APPROVAL_LIMIT_IDR, LONG_LEAD_DAYS, SCE_MIN_SPARE, SCE_TAGS } from "@/lib/rules";
+import { masterDataWorklist } from "@/lib/workflow";
 import { date, idr, num, pct } from "@/lib/format";
 import { DEFAULT_PARAMS } from "@/lib/params";
 import type { Params } from "@/lib/types";
@@ -34,6 +37,9 @@ export default async function DataPage() {
   const counts = tableCounts();
   const gaps = dataGaps();
   const d = DEFAULT_PARAMS;
+  const gov = portfolio(d).governance;
+  const sceLoc = sceLocations();
+  const md = masterDataWorklist(d);
   const k = (x: number) => ({ S: d.downtimeCostPerDay.S * x, A: d.downtimeCostPerDay.A * x, B: d.downtimeCostPerDay.B * x, C: d.downtimeCostPerDay.C * x });
   const sens = [
     { label: "Downtime cost × 0.5", p: { ...d, downtimeCostPerDay: k(0.5) } },
@@ -79,6 +85,52 @@ export default async function DataPage() {
           </Table>
         </Card>
       </div>
+
+      <Card title="Safety and governance rules" subtitle="Company policy, not cost–risk scenarios: fixed rules applied on top of the cost model." className="mt-4">
+        <Table>
+          <thead><tr><Th>Rule</Th><Th>Definition</Th><Th>Today</Th><Th>Effect</Th></tr></thead>
+          <tbody>
+            <tr>
+              <Td className="font-medium">Safety-critical element (SCE)</Td>
+              <Td>Installed on a FuncLoc tagged {SCE_TAGS.map((t) => `${t}`).join(" or ")} (safety / pressure-relief valve, shutdown valve)</Td>
+              <Td className="tabular">{num(gov.sce)} parts on {num(sceLoc.locations)} locations; {num(sceLoc.rated_s)} of these locations are rated S</Td>
+              <Td className="text-ink-2">Downtime risk costed as class A, so {num(gov.sceReorders)} SCE parts are reorders today ({idr(gov.sceReorderValue)}); at least {SCE_MIN_SPARE} spare always kept ({num(gov.sceFloorOnly)} part held only by this floor); never “potentially obsolete”; every reduction needs sign-off</Td>
+            </tr>
+            <tr>
+              <Td className="font-medium">Long-lead part</Td>
+              <Td>Critical (A/B or SCE), 80th-percentile lead time over {LONG_LEAD_DAYS} days measured on its own POs (category estimates do not count)</Td>
+              <Td className="tabular">{num(gov.longLead)} parts</Td>
+              <Td className="text-ink-2">Badge and reason: the fastest delivery in its category is too slow for emergency buying, so plan ahead or hold a capital spare</Td>
+            </tr>
+            <tr>
+              <Td className="font-medium">Management sign-off</Td>
+              <Td>Buys above {idr(APPROVAL_LIMIT_IDR)}; reductions above {idr(APPROVAL_LIMIT_IDR)} or of any SCE part</Td>
+              <Td className="tabular">{num(gov.signoffBuys)} buys and {num(gov.signoffReductions)} reductions among today&apos;s recommendations</Td>
+              <Td className="text-ink-2">Pending-approval list in the Management workspace; the PR draft and released capital wait for the sign-off</Td>
+            </tr>
+            <tr>
+              <Td className="font-medium">Decision log</Td>
+              <Td>Every approve, reject, undo and sign-off with role, time, quantity, value and reason</Td>
+              <Td>Kept in the browser in this MVP</Td>
+              <Td className="text-ink-2">Audit trail and CSV export in the Management workspace; a shared database in the pilot</Td>
+            </tr>
+          </tbody>
+        </Table>
+        <Note>The SCE tag rule stands in for the plant&apos;s SCE register, which replaces it in the pilot. {pct(sceLoc.rated_s / Math.max(1, sceLoc.locations))} of the tagged valves carry the lowest equipment criticality, so criticality alone would under-protect them.</Note>
+      </Card>
+
+      <Card
+        title="Master-data work list"
+        subtitle="Candidates for the SAP master-data team to check, not automatic changes."
+        className="mt-4"
+        action={<a href="/api/master-data?format=csv" className="btn btn-secondary btn-sm"><Download size={13} aria-hidden /> Download work list (CSV)</a>}
+      >
+        <Table>
+          <thead><tr><Th>Issue</Th><Th right>Material numbers</Th><Th right>Stock value</Th><Th>Suggested SAP action</Th></tr></thead>
+          <tbody>{md.summary.map((s) => <tr key={s.issue}><Td>{s.issue}</Td><Td right>{num(s.materials)}</Td><Td right>{idr(s.value)}</Td><Td className="text-ink-2">{s.action}</Td></tr>)}</tbody>
+        </Table>
+        <Note>{num(md.groups)} groups share an identical description and unit; in {num(md.emptyWhileTwinHolds)} of them one number is empty while another holds stock (the Planner already transfers between them). The same description is not proof of the same specification, so each group needs a check before merging. Stock values use PO prices, or category medians for parts never bought.</Note>
+      </Card>
 
       <Card title="Data gaps and the additional data we propose" subtitle="Each gap limits a specific result; the proposal names the source and the business reason." className="mt-4">
         <Table>
@@ -135,7 +187,7 @@ export default async function DataPage() {
             <thead><tr><Th>Table</Th><Th right>Rows</Th></tr></thead>
             <tbody>{counts.map((c) => <tr key={c.name}><Td className="font-mono text-xs">{c.name}</Td><Td right>{num(c.rows)}</Td></tr>)}</tbody>
           </Table>
-          <Note>JSON API: /api/summary · /api/recommendations · /api/materials/[id] · /api/forecast · /api/replay · /api/scenario (POST) · /api/pr-draft (POST) · /api/impact (POST) · /api/data-quality</Note>
+          <Note>JSON API: /api/summary · /api/recommendations · /api/materials/[id] · /api/forecast · /api/replay · /api/scenario (POST) · /api/pr-draft (POST) · /api/impact (POST) · /api/data-quality · /api/master-data</Note>
         </Card>
       </div>
     </>

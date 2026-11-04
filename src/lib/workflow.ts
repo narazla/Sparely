@@ -20,7 +20,12 @@ export interface Decision {
   role: string;
   at: string;
   source?: string;
+  /** Management sign-off for buys and reductions above the approval limit (rules.ts) */
+  signoff?: "pending" | "approved" | "rejected";
 }
+
+/** A decision takes effect once approved and, where needed, signed off by Management. */
+export const effective = (d: Decision) => d.status === "approved" && (!d.signoff || d.signoff === "approved");
 
 const addDays = (iso: string, d: number) => {
   const x = new Date(iso + "T00:00:00Z");
@@ -188,8 +193,9 @@ export function departmentSummary(p: Params) {
 }
 
 export function insuranceGaps(p: Params): Recommendation[] {
+  // safety-critical gaps are not a review: their spare is already a Planner reorder
   return getRecommendations(p)
-    .filter((r) => r.health === "Insurance gap")
+    .filter((r) => r.health === "Insurance gap" && r.action !== "Reorder")
     .sort((a, b) => CRIT_RANK[b.criticality] - CRIT_RANK[a.criticality] || b.annual_demand * b.downtime_prob - a.annual_demand * a.downtime_prob);
 }
 
@@ -312,6 +318,62 @@ export function expediteList(p: Params) {
     .sort((a, b) => b.priority - a.priority);
 }
 
+// ------------------------------------------------------------------ master data
+
+export interface MasterDataRow {
+  issue: string;
+  material_no: number;
+  description: string;
+  detail: string;
+  sap_action: string;
+  value: number;
+}
+
+const MD_ISSUES = {
+  twin: { issue: "Same description and unit under several numbers", action: "Check interchangeability; keep one active number and link or block the others" },
+  toStock: { issue: "Non Stock part with repeated or planned demand", action: "Change MRP type to Stock Item and load the recommended Min / Max" },
+  toNonStock: { issue: "Stock Item that the policy would buy on demand", action: "Change MRP type to Non Stock; run the stock down" },
+  uncontrolled: { issue: "Non Stock part holding stock", action: "Stock outside Min–Max control: return, transfer or reclassify" },
+};
+
+/** Work list for the SAP master-data team. Candidates to check, not automatic changes. */
+export function masterDataWorklist(p: Params) {
+  const recs = getRecommendations(p);
+  const rows: MasterDataRow[] = [];
+  const byKey = new Map<string, Recommendation[]>();
+  for (const r of recs) {
+    if (r.twin_count > 0) {
+      const k = `${r.description}|${r.unit}`;
+      byKey.set(k, [...(byKey.get(k) ?? []), r]);
+    }
+    const value = r.stock * r.price;
+    if (r.flags.includes("Convert to Stock Item"))
+      rows.push({ issue: MD_ISSUES.toStock.issue, material_no: r.material_no, description: r.description, detail: `Rec. Min / Max ${Math.round(r.reorder_point)} / ${Math.round(r.max_level)}`, sap_action: MD_ISSUES.toStock.action, value });
+    else if (r.flags.includes("Convert to Non Stock"))
+      rows.push({ issue: MD_ISSUES.toNonStock.issue, material_no: r.material_no, description: r.description, detail: `Today Min / Max ${r.current_min} / ${r.current_max}`, sap_action: MD_ISSUES.toNonStock.action, value });
+    else if (r.mrp_type === "Non Stock" && r.stock > 0)
+      rows.push({ issue: MD_ISSUES.uncontrolled.issue, material_no: r.material_no, description: r.description, detail: `${r.stock} ${r.unit} on hand`, sap_action: MD_ISSUES.uncontrolled.action, value });
+  }
+  let groups = 0;
+  let emptyWhileTwinHolds = 0;
+  for (const g of byKey.values()) {
+    if (g.length < 2) continue;
+    groups++;
+    if (g.some((r) => r.stock <= 0) && g.some((r) => r.stock > 0)) emptyWhileTwinHolds++;
+    const numbers = g.map((r) => r.material_no).sort((a, b) => a - b);
+    for (const r of g)
+      rows.push({
+        issue: MD_ISSUES.twin.issue, material_no: r.material_no, description: r.description,
+        detail: `Group of ${g.length}: ${numbers.join(", ")} · stock ${r.stock} ${r.unit}`, sap_action: MD_ISSUES.twin.action, value: r.stock * r.price,
+      });
+  }
+  const summary = Object.values(MD_ISSUES).map((x) => {
+    const list = rows.filter((r) => r.issue === x.issue);
+    return { issue: x.issue, action: x.action, materials: list.length, value: list.reduce((a, r) => a + r.value, 0) };
+  });
+  return { rows, summary, groups, emptyWhileTwinHolds };
+}
+
 // ------------------------------------------------------------------ management
 
 /** What the decisions taken so far change: money committed, capital released, risk removed. */
@@ -329,10 +391,16 @@ export function decisionImpact(decisions: Decision[], p: Params) {
     insurance: 0,
     riskAvoided: 0,
     downtimeEventsAvoided: 0,
+    awaitingSignoff: 0,
   };
   for (const d of decisions) {
-    if (d.status === "rejected") {
+    if (d.status === "rejected" || d.signoff === "rejected") {
       out.rejected++;
+      continue;
+    }
+    // approved in a workspace but still waiting for Management: no money committed or released yet
+    if (!effective(d)) {
+      out.awaitingSignoff++;
       continue;
     }
     out.approved++;

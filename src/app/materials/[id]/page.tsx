@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { CostCurve, ForecastChart } from "@/components/charts";
-import { ActionChip, Card, Chip, CritChip, HealthChip, Note, PageHeader, Stat, Table, Td, Th, UrgencyChip } from "@/components/ui";
+import { ActionChip, Card, Chip, CritChip, HealthChip, Note, PageHeader, SafetyChips, Stat, Table, Td, Th, UrgencyChip } from "@/components/ui";
 import { getMeta, materialDetail, mlFeatures } from "@/lib/data";
 import { date, idr, num, pct, qty } from "@/lib/format";
 import { currentParams } from "@/lib/server-params";
@@ -48,6 +48,7 @@ export default async function MaterialPage({ params }: { params: Promise<{ id: s
       <PageHeader crumbs={[{ label: "Analytics" }, { label: "Material List", href: "/recommendations" }, { label: String(m.material_no) }]} title={m.description} subtitle={`Material ${m.material_no} · ${m.category} · Plant 1000`}>
         <div className="flex flex-wrap items-center gap-2">
           <CritChip crit={m.criticality} />
+          <SafetyChips sce={r.sce} longLead={r.long_lead} />
           <ActionChip action={r.action} />
           <UrgencyChip urgency={r.urgency} />
           <HealthChip health={r.health} />
@@ -61,7 +62,7 @@ export default async function MaterialPage({ params }: { params: Promise<{ id: s
             ["Category", m.category],
             ["Base unit", m.unit],
             ["MRP type", m.mrp_type],
-            ["Criticality", `${m.criticality} (${m.n_funcloc_critical} of ${m.n_funcloc} FuncLocs A/B)`],
+            ["Criticality", `${m.criticality} (${m.n_funcloc_critical} of ${m.n_funcloc} FuncLocs A/B${m.n_funcloc_sce > 0 ? `, ${m.n_funcloc_sce} safety/shutdown valve` : ""})`],
             ["Supplier", m.supplier_name ?? "No PO history"],
             ["Lead time", `${num(m.lt_mean, 0)} d · P80 ${num(m.lt_p80, 0)} d`],
             ["Unit price", `${idr(r.price)}${m.price_source === "PO history" ? "" : " (est.)"}`],
@@ -91,6 +92,7 @@ export default async function MaterialPage({ params }: { params: Promise<{ id: s
               <div className="mt-1 text-xl font-semibold">{qty(r.order_qty)} {m.unit}</div>
               <div className="text-ink-2">{idr(r.order_value)} · order by {date(r.order_by)}</div>
               <div className="mt-1 text-xs text-muted">Expected arrival ≈ {Math.round(r.lead_time_days)} days</div>
+              {r.requires_approval && <div className="mt-2 text-xs font-semibold text-accent-ink">Needs Management sign-off before it reaches the PR draft</div>}
             </div>
           )}
         </div>

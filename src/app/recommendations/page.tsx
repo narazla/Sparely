@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { Download } from "lucide-react";
-import { ActionChip, Card, CritChip, HealthChip, MaterialLink, PageHeader, Table, Td, Th, UrgencyChip } from "@/components/ui";
+import { ActionChip, Card, Chip, CritChip, HealthChip, MaterialLink, PageHeader, SafetyChips, Table, Td, Th, UrgencyChip } from "@/components/ui";
 import { getRecommendations } from "@/lib/data";
-import { filterRecs, SORTS } from "@/lib/filters";
+import { filterRecs, SORTS, TAGS } from "@/lib/filters";
 import { date, idr, num, pct, qty } from "@/lib/format";
 import { currentParams } from "@/lib/server-params";
 import { CRITS } from "@/lib/types";
@@ -61,6 +61,12 @@ export default async function Recommendations({ searchParams }: { searchParams: 
             {CRITS.map((c) => <option key={c}>{c}</option>)}
           </select>
         </label>
+        <label className="text-xs text-muted">Flag<br />
+          <select name="tag" defaultValue={sp.tag ?? ""} className={select}>
+            <option value="">All</option>
+            {Object.entries(TAGS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+        </label>
         <label className="text-xs text-muted">Sort by<br />
           <select name="sort" defaultValue={sp.sort ?? "priority"} className={select}>
             {Object.entries(SORTS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
@@ -89,7 +95,11 @@ export default async function Recommendations({ searchParams }: { searchParams: 
             {shown.map((r) => (
               <tr key={r.material_no} className="hover:bg-surface-2">
                 <Td>
-                  <MaterialLink id={r.material_no} />
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <MaterialLink id={r.material_no} />
+                    <SafetyChips sce={r.sce} longLead={r.long_lead} />
+                    {r.requires_approval && <span title="Needs Management sign-off"><Chip tone="accent">Sign-off</Chip></span>}
+                  </span>
                   <div className="max-w-72 truncate text-xs text-muted" title={r.description}>{r.description}</div>
                 </Td>
                 <Td><CritChip crit={r.criticality} /></Td>

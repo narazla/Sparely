@@ -8,6 +8,7 @@
  * holding + ordering + downtime-risk cost; the same cost model is used to
  * evaluate today's static Min-Max so both can be compared like for like.
  */
+import { LONG_LEAD_DAYS, SCE_MIN_SPARE } from "./rules";
 import { normCdf, normInv, poissonCdf, poissonQuantile } from "./stats";
 import { isCritical, type Action, type CostBreakdown, type Crit, type Health, type MaterialRow, type Params, type Recommendation } from "./types";
 
@@ -22,6 +23,14 @@ export const IMPACT_WEIGHT: Record<Crit, number> = { A: 1, B: 0.5, C: 0.15, S: 0
 const SLOW_MOVING_DAYS = 180;
 /** ML early-warning threshold; its hit rate on the hold-out is read from ml_calibration and shown in the app. */
 export const ML_WARNING = 0.3;
+
+/** Safety-critical element: the part is installed on a safety or shutdown valve. */
+export const isSce = (m: Pick<MaterialRow, "n_funcloc_sce">) => (m.n_funcloc_sce ?? 0) > 0;
+/**
+ * Class whose downtime risk the cost model uses. A safety-critical part counts as A whatever the
+ * criticality of its equipment: without the part the valve cannot be returned to service.
+ */
+export const riskClass = (m: Pick<MaterialRow, "criticality" | "n_funcloc_sce">): Crit => (isSce(m) ? "A" : m.criticality);
 
 export interface PlannedEvent {
   offset: number; // days after as-of
@@ -64,7 +73,8 @@ export function context(m: MaterialRow, planned: PlannedEvent[] | undefined, p: 
   // a stockout that stops production lasts until an expedited part arrives (fastest observed deliveries)
   const emergencyDays = Math.max(p.emergencyMinDays, m.lt_fast * p.leadTimeFactor);
   const price = Math.max(1, m.price_idr);
-  const downtimeProb = Math.min(1, IMPACT_WEIGHT[m.criticality] * impactScale);
+  const rc = riskClass(m);
+  const downtimeProb = Math.min(1, IMPACT_WEIGHT[rc] * impactScale);
   return {
     L, sL, lam, z, mu, varD, plannedLT, annual, mL, vL,
     slow: lam * L < 3,
@@ -74,7 +84,7 @@ export function context(m: MaterialRow, planned: PlannedEvent[] | undefined, p: 
     downtimeProb,
     emergencyDays,
     // one stockout = chance the equipment waits for an expedited part + emergency price premium on one demand
-    stockoutCost: downtimeProb * p.downtimeCostPerDay[m.criticality] * emergencyDays + p.emergencyPremium * price * z,
+    stockoutCost: downtimeProb * p.downtimeCostPerDay[rc] * emergencyDays + p.emergencyPremium * price * z,
   };
 }
 
@@ -127,11 +137,24 @@ export interface Policy {
   max: number;
   ss: number;
   cost: CostBreakdown;
+  /** kept only because the part is safety-critical (the cost model alone would not stock it) */
+  floor?: boolean;
+}
+
+/** A safety-critical part that the cost model would not stock still keeps one spare on the shelf. */
+function safetyFloor(c: Ctx): Policy {
+  const k = costOf(c, 0, SCE_MIN_SPARE);
+  // the spare sits on the shelf until it is used: hold the whole unit, not half an order cycle
+  const holding = c.h * c.price * SCE_MIN_SPARE;
+  return {
+    stocked: true, sl: k.serviceLevel, rop: 0, q: SCE_MIN_SPARE, max: SCE_MIN_SPARE, ss: 0, floor: true,
+    cost: { ...k, holding, avgInventory: SCE_MIN_SPARE, total: holding + k.ordering + k.risk },
+  };
 }
 
 export function choosePolicy(c: Ctx, m: MaterialRow, p: Params): Policy {
   const q = orderQuantity(c);
-  const candidates = p.mode === "fixed" ? [p.serviceLevel[m.criticality]] : SL_GRID;
+  const candidates = p.mode === "fixed" ? [p.serviceLevel[riskClass(m)]] : SL_GRID;
   let best: Policy | null = null;
   for (const s of candidates) {
     const rop = Math.max(0, reorderPoint(c, s));
@@ -143,8 +166,10 @@ export function choosePolicy(c: Ctx, m: MaterialRow, p: Params): Policy {
   }
   const none = noStockCost(c);
   if (best && none.total < best.cost.total) {
-    return { stocked: false, sl: 0, rop: 0, q: 0, max: 0, ss: 0, cost: none };
+    best = { stocked: false, sl: 0, rop: 0, q: 0, max: 0, ss: 0, cost: none };
   }
+  // a missing part for a safety or shutdown valve is a process-safety risk, not only a cost
+  if (isSce(m) && best!.max < SCE_MIN_SPARE) return safetyFloor(c);
   return best!;
 }
 
@@ -161,7 +186,7 @@ const addDays = (iso: string, days: number) => {
   return d.toISOString().slice(0, 10);
 };
 
-const fmtQty = (v: number) => (v >= 100 ? Math.round(v).toLocaleString("en-US") : v.toFixed(v >= 10 ? 0 : 1));
+const fmtQty = (v: number) => (v >= 100 ? Math.round(v).toLocaleString("en-US") : Number.isInteger(v) ? String(v) : v.toFixed(v >= 10 ? 0 : 1));
 
 export function recommend(
   m: MaterialRow,
@@ -182,9 +207,13 @@ export function recommend(
   const nonMoving = m.hist_lines === 0;
   const slowMoving = !nonMoving && (m.days_since_last_issue ?? 0) > SLOW_MOVING_DAYS;
   const mlWarning = (m.p_demand_90d ?? 0) >= ML_WARNING;
+  const sce = isSce(m);
+  const rc = riskClass(m);
+  // emergency buying cannot beat a lead time this long; only observed lead times count, not category estimates
+  const longLead = isCritical(rc) && m.lt_source !== "Category estimate" && m.lt_p80 > LONG_LEAD_DAYS;
   // a part never issued, with no planned job and no ML warning is an insurance decision for reliability
-  // engineers, not an automatic PO
-  const insuranceCandidate = nonMoving && c.plannedLT <= 0 && m.planned_qty_12m <= 0 && !mlWarning;
+  // engineers, not an automatic PO; safety-critical parts are not optional and always keep their spare
+  const insuranceCandidate = nonMoving && c.plannedLT <= 0 && m.planned_qty_12m <= 0 && !mlWarning && !sce;
 
   let action: Action = "Maintain";
   let urgency: Recommendation["urgency"] = null;
@@ -214,7 +243,7 @@ export function recommend(
     action = "Reorder";
     orderQty = Math.max(Math.ceil(pol.max - ip), 1);
     orderBy = asOf;
-    urgency = m.stock < c.mL && isCritical(m.criticality) ? "Critical" : m.stock < c.mL ? "High" : "Normal";
+    urgency = m.stock < c.mL && isCritical(rc) ? "Critical" : m.stock < c.mL || (sce && m.stock <= 0) ? "High" : "Normal";
   } else if (m.stock > keepLevel) {
     action = "Reduce";
     excessQty = m.stock - keepLevel;
@@ -225,17 +254,19 @@ export function recommend(
   if (action === "Maintain" && (slowMoving || m.abnormal_events > 0)) action = "Monitor";
 
   let health: Health;
-  if (m.stock <= 0) health = !pol.stocked ? "No stock needed" : insuranceCandidate ? "Insurance gap" : "Stockout";
+  if (m.stock <= 0) health = !pol.stocked ? "No stock needed" : insuranceCandidate || (sce && nonMoving) ? "Insurance gap" : "Stockout";
   else if (tamOnly && m.stock <= keepLevel) health = "TAM reserve";
   else if (nonMoving) {
-    if (pol.stocked && isCritical(m.criticality) && m.stock <= pol.max) health = "Critical insurance spare";
-    else if (m.planned_qty_12m <= 0 && !isCritical(m.criticality)) health = "Potentially obsolete";
+    if (pol.stocked && isCritical(rc) && m.stock <= pol.max) health = "Critical insurance spare";
+    else if (m.planned_qty_12m <= 0 && !isCritical(rc)) health = "Potentially obsolete";
     else health = "Non-moving";
   } else if (slowMoving) health = "Slow-moving";
   else if (m.stock > pol.max) health = "Excess";
   else if (ip <= pol.rop) health = "Below reorder point";
   else health = "Healthy";
 
+  if (sce) flags.push("Safety-critical (SCE)");
+  if (longLead) flags.push("Long-lead");
   if (mlWarning) flags.push("ML early warning");
   // only recommend a master-data change when the data shows repeated need (2+ months) or a planned job;
   // never-used parts are an insurance decision instead
@@ -250,6 +281,12 @@ export function recommend(
   if (m.lt_source === "Category estimate") flags.push("Lead time estimated");
 
   const plannedPart = m.planned_qty_12m * p.demandFactor;
+  if (sce)
+    reasons.push(
+      `Safety-critical element: installed on ${m.n_funcloc_sce} safety or shutdown valve location(s)` +
+        (m.criticality !== "A" ? ` (equipment criticality ${m.criticality})` : "") +
+        `. Downtime risk is costed as class A and at least ${SCE_MIN_SPARE} spare is always kept; any reduction needs Management sign-off.`
+    );
   reasons.push(
     `Forecast ${fmtQty(c.annual)} ${m.unit}/year: ${fmtQty(c.mu * 365)} unplanned (${m.forecast_method.toLowerCase()})` +
       (plannedPart > 0 ? ` + ${fmtQty(plannedPart)} from the maintenance plan.` : ".")
@@ -258,7 +295,9 @@ export function recommend(
     `Lead time ~${Math.round(c.L)} days; expected demand during lead time ${fmtQty(c.mL)}` +
       (c.plannedLT > 0 ? ` (incl. ${fmtQty(c.plannedLT)} planned)` : "") + "."
   );
-  if (pol.stocked) {
+  if (pol.floor) {
+    reasons.push(`Buying on demand would cost less, but a safety-critical part keeps ${SCE_MIN_SPARE} spare: reorder only when the shelf is empty.`);
+  } else if (pol.stocked) {
     reasons.push(
       `A ${(pol.sl * 100).toFixed(1)}% service level gives the lowest holding + downtime-risk cost: reorder at ${fmtQty(pol.rop)}, order up to ${fmtQty(pol.max)}.`
     );
@@ -276,6 +315,12 @@ export function recommend(
   if (health === "TAM reserve")
     reasons.push(`Used only during the last turnaround (${fmtQty(tamReserve)} ${m.unit}): keep it for the next one instead of treating it as slow-moving.`);
   if (health === "Critical insurance spare") reasons.push("No issue in 17 months, but it protects critical equipment: keep it.");
+  if (longLead)
+    reasons.push(
+      `Long lead time: 80% of deliveries took up to ${Math.round(m.lt_p80)} days and the fastest seen in its category ${Math.round(m.lt_fast)} days` +
+        ((m.n_suppliers ?? 0) === 1 ? ", from a single supplier" : "") +
+        ". Emergency buying cannot prevent downtime: plan ahead or hold as a capital spare."
+    );
   if (m.n_funcloc_critical > 0) reasons.push(`Installed on ${m.n_funcloc} FuncLoc(s), ${m.n_funcloc_critical} of them criticality A/B.`);
   if (mlWarning)
     reasons.push(
@@ -285,10 +330,10 @@ export function recommend(
 
   const priority =
     action === "Reorder"
-      ? 1000 * stockoutRisk * CRIT_WEIGHT[m.criticality] + (urgency === "Critical" ? 500 : 0)
+      ? 1000 * stockoutRisk * CRIT_WEIGHT[rc] + (urgency === "Critical" ? 500 : 0)
       : action === "Reduce"
         ? (excessQty * c.price) / 1e9
-        : stockoutRisk * CRIT_WEIGHT[m.criticality];
+        : stockoutRisk * CRIT_WEIGHT[rc];
 
   return {
     material_no: m.material_no,
@@ -326,6 +371,11 @@ export function recommend(
     transfer_from: [],
     twin_count: 0,
     health,
+    sce,
+    safety_floor: !!pol.floor,
+    long_lead: longLead,
+    // set in data.ts once identical stock has been applied (it changes the buy value)
+    requires_approval: false,
     flags,
     reasons,
     priority,
@@ -393,7 +443,7 @@ export function calibrateImpact(rows: MaterialRow[], planned: Map<number, Planne
   let weighted = 0;
   for (const m of rows) {
     const c = context(m, planned.get(m.material_no), p, 1);
-    weighted += currentCost(c, m).stockouts * IMPACT_WEIGHT[m.criticality];
+    weighted += currentCost(c, m).stockouts * IMPACT_WEIGHT[riskClass(m)];
   }
   return weighted > 0 ? emergenciesPerYear / weighted : 0;
 }
