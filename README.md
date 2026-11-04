@@ -174,7 +174,6 @@ Additional project documentation is available in `docs/`:
 * [Forecast and ML early warning](https://github.com/narazla/Sparely/blob/main/docs/02-forecast-and-ml.md)
 * [Optimization engine and replay proof](https://github.com/narazla/Sparely/blob/main/docs/03-optimization-engine.md)
 * [Safety and governance](https://github.com/narazla/Sparely/blob/main/docs/04-safety-and-governance.md)
-* [Demo script](https://github.com/narazla/Sparely/blob/main/docs/05-demo-script.md)
 
 ---
 
