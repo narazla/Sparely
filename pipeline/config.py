@@ -6,7 +6,8 @@ changes one line instead of the logic.
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RAW_DIR = ROOT.parent / "Supporting Data"          # organizer files, untouched
+# Organizer files, untouched: raw-data/ inside the submission zip, or the sibling folder during development.
+RAW_DIR = ROOT / "raw-data" if (ROOT / "raw-data").exists() else ROOT.parent / "Supporting Data"
 DB_PATH = ROOT / "data" / "caliber.db"
 
 # Data covers 2025-05-01 .. 2026-09-30, so the planning "today" is the day after.
@@ -46,20 +47,31 @@ PR_TYPE_LABELS = {
 # Non-IDR prices converted with fixed rates (assumption).
 FX_TO_IDR = {"IDR": 1.0, "USD": 16300.0, "EUR": 17700.0, "SGD": 12600.0, "JPY": 108.0}
 
-# Criticality ranking (S = safety-critical, highest). Missing criticality -> C.
-CRIT_RANK = {"S": 4, "A": 3, "B": 2, "C": 1}
+# Criticality ranking, most critical first: A > B > C > S. Missing criticality -> S (lowest).
+CRIT_RANK = {"A": 4, "B": 3, "C": 2, "S": 1}
+LOWEST_CRIT = "S"
 
-# Maintenance-plan tasks that consume spare parts (keyword match on task text).
+# Maintenance-plan tasks that consume spare parts, and which part categories
+# (first word of the material description) each task replaces. First match wins.
 # Inspection, calibration, measurement and testing tasks are assumed to consume none.
-CONSUMING_TASK_KEYWORDS = {
-    "Overhaul": ["overhaul"],
-    "Replacement": ["replacement", "change"],
-    "Lubrication": ["re-greasing"],
-}
+TASK_PART_RULES = [
+    ("Lubrication", r"lube oil change", {"OIL"}),
+    ("Lubrication", r"re-greasing", {"GREASE"}),
+    ("Replacement", r"filter element replacement", {"FILTER ELEMENT", "SCREEN"}),
+    ("Overhaul", r"final element overhaul",
+     {"TRIM SET", "SEAT RING", "PACKING SET", "GASKET", "DIAPHRAGM", "O-RING", "SPRING", "STUDBOLT"}),
+    ("Overhaul", r"pump overhaul",
+     {"BEARING", "SEAL", "GASKET", "O-RING", "SLEEVE", "RING", "IMPELLER", "COUPLING", "STUDBOLT"}),
+    ("Overhaul", r"(compressor|turbine) major overhaul",
+     {"BEARING", "SEAL", "GASKET", "O-RING", "RING", "SLEEVE", "BLADE", "NOZZLE", "PACKING SET",
+      "DIAPHRAGM", "FILTER ELEMENT", "STUDBOLT"}),
+]
 
 # Demand model settings
 RECENCY_HALF_LIFE_DAYS = 180     # recent demand weighs more (dynamic forecast)
 CREDIBILITY_K = 2.0              # events needed before history outweighs the installed-base prior
+EMERGENCE_SPLIT = "2026-05-01"   # parts unused before this date: how often do they get a first demand after it?
+EMERGENCE_SPLIT_BACKTEST = "2026-01-01"
 ANOMALY_ROBUST_Z = 3.5           # robust z-score threshold for abnormal issues
 ANOMALY_MIN_EVENTS = 4
 

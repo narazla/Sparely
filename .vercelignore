@@ -1,0 +1,5 @@
+# internal team notes and local build artefacts are not deployed
+caliber juara.txt
+.next
+node_modules
+pipeline/__pycache__

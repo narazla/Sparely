@@ -1,103 +1,128 @@
-import Image from "next/image";
+import Link from "next/link";
+import { ArrowRight, BrainCircuit, ClipboardCheck, Database, Factory, ShieldCheck, ShoppingBag, Wrench } from "lucide-react";
+import { Card, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
+import { DecisionSummary } from "@/components/workspace";
+import { backtest, dataQuality, getImpact, getMeta, mlMetrics, portfolio } from "@/lib/data";
+import { idr, num, pct } from "@/lib/format";
+import { ROLES } from "@/lib/roles";
+import { replay } from "@/lib/replay";
+import { currentParams } from "@/lib/server-params";
+import { expediteList, jobReadiness } from "@/lib/workflow";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function Start() {
+  const meta = getMeta();
+  const p = await currentParams();
+  const pf = portfolio(p);
+  const ml = mlMetrics().find((m) => m.model.startsWith("ML"));
+  const bt = backtest();
+  const ours = bt.find((b) => b.method.startsWith("CALIBER"));
+  const stat = bt.find((b) => b.method.startsWith("Static"));
+  const impact = getImpact();
+  const checks = dataQuality().length;
+  const rp = replay(p);
+  const S = rp.staticPolicy;
+  const A = rp.aiPolicy;
+
+  const flow = [
+    { icon: Database, t: "1 · Baseline data", d: `6 files: ${num(Number(meta.materials))} parts, ${num(Number(meta.funclocs))} FuncLocs, ${num(Number(meta.movements))} issues, ${num(Number(meta.notifications))} notifications, ${num(Number(meta.mplan_items))} plan items, ${num(Number(meta.po_lines))} PO lines` },
+    { icon: ShieldCheck, t: "2 · Clean & link", d: `${checks} data-quality checks (duplicates, units, currencies, cycles); parts linked to equipment, failures, purchases and the maintenance plan` },
+    { icon: BrainCircuit, t: "3 · Forecast & optimize", d: `Hybrid demand forecast (bias ${pct(ours?.bias ?? 0)} vs ${pct(stat?.bias ?? 0)} static), ML early warning (AUC ${(ml?.auc ?? 0).toFixed(2)}), cost–risk optimizer calibrated to ${num(impact.emergenciesPerYear, 0)} emergencies / yr` },
+    { icon: ClipboardCheck, t: "4 · Role workspaces", d: "Maintenance requests job parts; the Planner uses identical stock first, then approves reorders and Min–Max; Procurement gets a PR draft" },
+    { icon: Factory, t: "5 · Proven impact", d: `Replaying May–Sep 2026: stockouts ${num(S.stockouts)} → ${num(A.stockouts)}, demand days served ${pct(S.servedDays / S.demandDays)} → ${pct(A.servedDays / A.demandDays)}, inventory held ${pct(A.avgInventoryValue / S.avgInventoryValue - 1)}` },
+  ];
+
+  const brief: [string, string, string, string][] = [
+    ["Demand forecasting (history, failures, maintenance, shutdowns, installed base, abnormal use)", "/forecast", "Demand Forecast", `${num(Number(meta.planned_events_12m))} planned part lines in 12 months; turnaround split out; abnormal issues capped`],
+    ["Dynamic Min–Max, safety stock, reorder point, replenishment qty", "/workspace/planner", "Planner workspace", `${num(pf.actions.Reorder)} reorders; Min–Max recomputed per part on every request`],
+    ["Inventory health: excess, slow-moving, non-moving, potentially obsolete", "/health", "Inventory Health", `${num(pf.health.find((h) => h.status === "Non-moving")?.count ?? 0)} non-moving · ${num(pf.health.find((h) => h.status === "Potentially obsolete")?.count ?? 0)} potentially obsolete`],
+    ["Reorder / maintain / reduce / monitor, balancing cost vs stockout & downtime risk", "/recommendations", "Material List", `${num(pf.actions.Reorder)} reorder · ${num(pf.actions.Reduce)} reduce · ${num(pf.actions.Monitor)} monitor · ${num(pf.actions.Maintain)} maintain`],
+    ["Stockout risk & overstock risk", "/recommendations?sort=risk", "Material List", `${num(pf.criticalAtRisk)} critical parts ≥ 50% stockout risk · excess ${idr(pf.excessValuePo)} at PO prices`],
+    ["Slow-moving alert", "/health", "Inventory Health", `${num(pf.health.find((h) => h.status === "Slow-moving")?.count ?? 0)} parts not issued for > 180 days`],
+    ["Cost–risk optimization scenarios (raise / lower inventory)", "/scenario", "Cost–Risk Scenarios", "Presets + live re-optimization of all parts + efficient frontier + replay under the scenario"],
+    ["Shutdown and turnaround activities", "/workspace/maintenance", "Maintenance", `Last turnaround found in the data (${num(Number(meta.tam_parts))} parts); readiness for the next one with order-by dates`],
+    ["Right part available at the right time (the core problem)", "/health", "Inventory Health", `${num(pf.transfer.parts)} needs covered by the same item held under another material number · ${idr(pf.transfer.valueAvoided)} not bought`],
+    ["Evidence that the policy works", "/workspace/management", "Management", `Replay of ${num(S.demandDays)} real demand days: ${num(S.criticalStockouts)} → ${num(A.criticalStockouts)} stockouts on critical parts`],
+    ["Key Q1 — predictability of irregular demand", "/forecast", "Demand Forecast", "Demand split by cause, installed-base pooling, ML early warning, out-of-time backtests"],
+    ["Key Q2 — balance inventory cost, availability, operational risk", "/scenario", "Cost–Risk Scenarios", "Per-part service level chosen by minimum holding + downtime-risk cost"],
+  ];
+
+  const jobsShort = jobReadiness(90).filter((j) => j.status === "Short").length;
+  const expedite = expediteList(p).length;
+  const tiles = [
+    { id: "maintenance", icon: Wrench, value: num(jobsShort), label: "jobs in the next 90 days with missing parts" },
+    { id: "planner", icon: ClipboardCheck, value: num(pf.actions.Reorder + pf.actions.Transfer), label: `reorders and transfers to review (${num(pf.urgentCritical)} critical)` },
+    { id: "procurement", icon: ShoppingBag, value: num(expedite), label: "open POs to expedite" },
+    { id: "management", icon: Factory, value: idr(pf.excessValuePo), label: "excess stock to release (PO prices)" },
+  ] as const;
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <>
+      <PageHeader title="Spare Parts Planning — Overview" subtitle="Most tools forecast what you used. Sparely prepares you for what's coming — and proves it." />
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <Stat label="Reorder now" value={num(pf.actions.Reorder)} hint={`${num(pf.urgentCritical)} critical (A/B) · ${idr(pf.reorderValue)}`} tone="critical" />
+        <Stat label="Covered by identical stock" value={num(pf.transfer.parts)} hint={`${idr(pf.transfer.valueAvoided)} not bought`} tone="good" />
+        <Stat label="Excess to release" value={idr(pf.excessValuePo)} hint={`${num(pf.actions.Reduce)} materials · at PO prices`} />
+        <Stat label="Stockouts in replay (May–Sep 26)" value={`${num(S.stockouts)} → ${num(A.stockouts)}`} hint={`Current Min–Max → Sparely policy · critical ${num(S.criticalStockouts)} → ${num(A.criticalStockouts)}`} tone="good" />
+        <Stat label="Demand days served from stock" value={`${pct(S.servedDays / S.demandDays)} → ${pct(A.servedDays / A.demandDays)}`} hint={`Inventory held ${pct(A.avgInventoryValue / S.avgInventoryValue - 1)}`} />
+      </div>
+
+      <h2 className="mb-2 mt-6 text-[13.5px] font-semibold text-ink">My work</h2>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {tiles.map(({ id, icon: Icon, value, label }) => {
+          const r = ROLES.find((x) => x.id === id)!;
+          return (
+            <Link key={id} href={`/workspace/${id}`} className="group flex flex-col rounded border border-line bg-surface hover:border-accent hover:shadow-sm">
+              <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
+                <Icon size={16} className="text-accent" aria-hidden />
+                <span className="text-[13.5px] font-semibold text-ink">{r.name}</span>
+              </div>
+              <div className="flex-1 px-4 py-3">
+                <div className="tabular text-[26px] font-semibold leading-none text-ink">{value}</div>
+                <div className="mt-1 text-xs text-muted">{label}</div>
+                <p className="mt-3 text-xs leading-relaxed text-ink-2">{r.question}</p>
+              </div>
+              <div className="flex items-center justify-between border-t border-line px-4 py-2 text-xs">
+                <span className="text-muted">{r.who}</span>
+                <span className="inline-flex items-center gap-1 font-semibold text-accent group-hover:underline">Open <ArrowRight size={13} aria-hidden /></span>
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+      <div className="mt-2"><DecisionSummary /></div>
+
+      <Card title="Process" subtitle="From SAP extracts to an approved purchase requisition" className="mt-6">
+        <ol className="grid gap-px overflow-hidden rounded border border-line bg-line md:grid-cols-5">
+          {flow.map(({ icon: Icon, t, d }, i) => (
+            <li key={t} className="bg-surface p-3">
+              <div className="flex items-center gap-2">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-[11px] font-bold text-white">{i + 1}</span>
+                <span className="text-[13px] font-semibold">{t.replace(/^\d · /, "")}</span>
+                <Icon size={14} className="ml-auto text-muted" aria-hidden />
+              </div>
+              <p className="mt-2 text-xs leading-relaxed text-ink-2">{d}</p>
+            </li>
+          ))}
+        </ol>
+      </Card>
+
+      <Card title="Case requirements coverage" subtitle="Each expected output of the brief, where it is in the system, and the live evidence" className="mt-4">
+        <Table>
+          <thead><tr><Th>Expected output / key question</Th><Th>Where</Th><Th>Evidence (live)</Th></tr></thead>
+          <tbody>
+            {brief.map(([req, href, page, ev]) => (
+              <tr key={req}>
+                <Td>{req}</Td>
+                <Td className="whitespace-nowrap"><Link href={href} className="font-semibold text-accent hover:underline">{page}</Link></Td>
+                <Td className="text-ink-2">{ev}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </Card>
+    </>
   );
 }
