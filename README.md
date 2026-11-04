@@ -1,173 +1,335 @@
-# Sparely — CALIBER 2026 Final Case
+# Sparely — Spare Part Intelligence & Inventory Optimization
 
-**Sparely** is spare part intelligence and inventory optimization.
+<div align="center">
 
-Equipment criticality runs **A > B > C > S** (A is the most critical). "Critical" in the app means A or B, plus every safety-critical element (see below).
+*Just enough, just in time.*
 
-AI-powered spare part demand forecasting and dynamic inventory optimization.
-The MVP turns six SAP-style baseline files into one decision per spare part (reorder, transfer, reduce, monitor or maintain), with dynamic Safety Stock, Reorder Point (Min) and Max, stockout and overstock risk, and cost–risk scenarios.
+<br>
 
-## User flow
+<img src="public/sparely-logo.png" alt="Sparely" width="60%" />
 
-The app opens on **Home**, which shows the end-to-end flow and a role picker. There is no login: the prototype demonstrates the flow, not access control. Each role has a workspace with a worklist:
+<br><br>
+
+**[Live Demo](https://sparely-caliber2026.vercel.app)** · **[AI Research Repository](https://github.com/narazla/sparepart-optimizer)** · **[Documentation](docs/)**
+
+</div>
+
+<br>
+
+Sparely is a web platform for maintenance, inventory, procurement and management teams at a petrochemical plant. It reads six SAP-style extracts, forecasts every spare part's demand by its cause (planned maintenance, equipment failure, turnaround), warns early which parts will be needed with a machine-learning model, and recalculates each part's Min, Max and safety stock by weighing holding cost against downtime risk. The result is not a dashboard but a worklist: one decision per part (reorder, transfer, reduce, monitor or maintain) that flows from the planner to procurement to management.
+
+> *"Most tools forecast what you used. Sparely prepares you for what's coming — and proves it."*
+
+### Design principles
+
+- **Measure first, assume last.** Every number that can be measured from the data is measured from the data. Assumptions are only used for what the data cannot tell, are listed openly, can be changed in the app, and are stress-tested.
+- **Safety is a rule, not a cost.** Parts that protect safety and shutdown valves are never left without a spare, whatever the cost model says.
+- **Every decision is accountable.** Recommendations come with numbered reasons, large decisions need management sign-off, and every approval is written to a decision log.
+- **Proven, not promised.** The policy is rebuilt from past data only and replayed against demand it never saw.
+
+---
+
+## Background
+
+> **36%** of all spare parts issued in 17 months were consumed in a single 3-month turnaround window.
+> **578 of 1,040** safety and shutdown valve locations are ranked at the *lowest* criticality.
+> **60%** of purchase orders arrive after the requested date, and every part has only one supplier.
+
+This project answers **CALIBER 2026 Final Case 3 — Spare Part Intelligence & Inventory Optimization**. When a shutdown happens, the critical part is out of stock, while slow-moving parts sit on the shelf. Stock is planned reactively with static Min–Max levels that ignore what really drives demand. The result is emergency buying, tied-up working capital and longer downtime.
+
+The baseline data (dummy SAP extracts from an ethylene cracker) shows four gaps:
+
+1. **Demand is unpredictable with averages.** Only 44 parts follow a regular pattern; 1,170 were issued in a single month and 5,625 never moved. Static Min–Max overestimates demand by 115%.
+2. **Turnaround demand is mixed with routine demand.** One turnaround spike inflates every forecast that follows it.
+3. **Criticality alone misses safety.** Most safety valve locations are ranked S, so a cost-only model would let their spares run out.
+4. **Master data hides stock.** 597 material numbers describe only 133 parts; in 66 groups one number shows zero stock while a twin holds stock.
+
+Equipment criticality runs **A > B > C > S** (A is the most critical, confirmed by the organisers). "Critical" in the app means A or B, plus every safety-critical element.
+
+---
+
+## Key Features
+
+### 1. Demand Forecast by Cause
+Demand is split into **planned maintenance** (from the maintenance plan, mapped to the parts each job replaces), **failure-driven demand** (recency-weighted compound Poisson, blended with an installed-base prior from equipment failure rates) and **turnaround demand** (detected from the data and kept out of the baseline). Parts that were never used still get a forecast from the equipment they are installed on.
+
+### 2. ML Early Warning
+A gradient-boosting classifier predicts which parts will be needed in the next 90 days. It is trained on monthly snapshots with features built only from data before each snapshot, and tested out-of-time.
+
+### 3. Cost–Risk Optimization per Part
+For every part, Sparely tries nine service levels, computes **holding + ordering + downtime-risk cost**, and picks the cheapest, including the option of not stocking at all. The probability that a stockout stops production is **calibrated to the Emergency notifications observed in the data**.
+
+### 4. Identical Stock First
+Before buying, Sparely checks whether a twin material number with the same description and unit holds stock above its own reorder point, and recommends a **Transfer** instead.
+
+### 5. Turnaround Readiness
+The last turnaround scope (360 parts) is detected from the data. The planner picks the next turnaround date; Sparely shows which parts will be short on day one and the latest order date for each.
+
+### 6. Safety & Governance Guardrails
+**Safety-Critical Elements** (parts on safety and shutdown valves) are always risk-rated as class A with at least one spare. **Long-lead** parts get a warning. Buys and reductions above Rp 1 billion, and any reduction of a safety-critical part, need **management sign-off**, and every decision is recorded in an **audit trail**.
+
+### 7. Role-Based Workflow
+Four workspaces hand work to each other, from recommendation to a purchase-requisition draft. There is no login: the prototype demonstrates the flow, not access control.
 
 | Workspace | Who | Does | Hands off to |
-|---|---|---|---|
-| Maintenance & Reliability | Maintenance planner, reliability engineer | Checks part readiness of jobs due in the next 90 days, requests short parts, checks next-turnaround readiness, acts on ML early warnings, decides insurance spares | Procurement |
-| Inventory Planner | Inventory / MRP controller | Uses identical stock held under another material number first, then approves or adjusts reorders, dynamic Min–Max updates and excess reductions | Procurement, Management |
-| Procurement | Buyer | Gets a PR draft (PR type, purchasing group and supplier taken from each part's PR PO history), expedites open POs | ERP |
-| Management | Plant / supply-chain manager | Signs off large buys and safety-critical reductions, reads the decision log, tracks spend committed and capital released, sees the replay proof, sets the cost–risk policy | All workspaces |
+| --- | --- | --- | --- |
+| Maintenance & Reliability | Maintenance planner, reliability engineer | Checks part readiness for jobs due in 90 days, requests short parts, checks turnaround readiness, acts on ML warnings, decides insurance spares | Procurement |
+| Inventory Planner | Inventory / MRP controller | Uses identical stock first, approves reorders, new Min–Max and excess reductions | Procurement, Management |
+| Procurement | Buyer | Gets a PR draft (PR type, purchasing group, supplier from history), expedites open POs | ERP (CSV) |
+| Management | Plant / supply-chain manager | Signs off large buys and safety-critical reductions, reviews the decision log, decision impact and replay proof, sets the cost–risk scenario | All workspaces |
 
-Decisions are stored in the browser (localStorage), so the hosted SQLite database stays read-only. In production they would be written back to the ERP.
-
-## What it does
-
-| Brief requirement | Where in the app |
-|---|---|
-| Demand forecasting (history, failures, maintenance plan, installed base, shutdowns, abnormal use) | **Demand Forecast** page, per-part chart on each material page |
-| Dynamic Min–Max, safety stock, reorder point, replenishment quantity | **Material List** and material page; Planner workspace |
-| Inventory health: excess, slow-moving, non-moving, potentially obsolete | **Inventory Health** page |
-| Reorder / maintain / reduce / monitor, balancing inventory cost vs stockout, downtime and production-loss risk | **Material List**, role workspaces |
-| Equipment and part criticality, including process safety | Safety-critical and long-lead badges, Material List filter |
-| Evidence that the policy works | **Management** workspace (replay) |
-| Scenario simulation of raising or lowering inventory levels | **Cost–Risk Scenarios** page (live re-optimization of all 7,481 parts) |
-
-## Architecture
-
-```
-Supporting Data (6 xlsx)
-        │  pipeline/build_db.py + ml_model.py  (Python: pandas, numpy, scikit-learn)
-        ▼   clean → link → demand features → forecast → backtest → ML early warning
-data/caliber.db  (SQLite, 26 tables)
-        │  better-sqlite3 (read-only)
-        ▼
-src/lib/engine.ts  — inventory optimization engine (runs on every request; all parts re-optimize in well under a second)
-src/lib/rules.ts   — safety and governance rules (SCE tags, minimum spare, long-lead, sign-off limit)
-        │
-        ▼
-Next.js 15 App Router (server-rendered pages + JSON API) → Vercel
+```text
+Maintenance  →  Inventory Planner  →  Procurement  →  Management
+ readiness      approve / transfer      PR draft       sign-off, impact, policy
 ```
 
-### Data cleaning (pipeline/build_db.py)
-- **PR PO:** 5,420 exact duplicate rows removed (47% of 11,609); 6,189 unique lines kept. `PO-Item Amount` is the unit price. 51 non-IDR lines are converted at fixed rates.
-- **Movement Material:** 863 exact duplicate issue rows removed (2.3% of issued units).
-- **BoM:** stock, Min and Max repeat on every FuncLoc row of a material, so they are counted once per material.
-- **Lead time:** POs due before their PR, or more than 365 days after it, are kept as records but excluded from lead-time statistics.
-- Every check and fix is in the `data_quality` table and on the **Data & Method** page.
+---
 
-### Demand model (pipeline/build_db.py)
-1. **Demand split by cause.** Order-number prefix → order type. Turnaround issues are event demand and stay out of the baseline. Preventive demand is replaced by the maintenance-plan forecast where one exists.
-2. **Failure-driven demand.** Each part's own issue history is recency-weighted (half-life 180 days) as a compound Poisson process. It is blended by credibility with an **installed-base prior**: the failure rate (Notif History) of every FuncLoc the part is installed on (BoM). Parts that were never used get a first-demand rate estimated from data, measured as how often previously unused parts got demanded.
-3. **Abnormal consumption.** A robust z-score flags abnormal issue sizes, which are then capped.
-4. **Known future demand.** Part-consuming maintenance jobs (overhaul, filter replacement, lubrication) from Mitem & Mplan are mapped to the BoM parts they replace. The usage factor is calibrated on preventive-order history.
-5. **Backtest.** Train on May 2025 – Apr 2026, test on May – Sep 2026, against a static average and Croston-SBA.
-6. **ML early warning** (pipeline/ml_model.py). A gradient-boosting classifier predicts the probability that a part is demanded in the next 90 days.
-   - Training data: 12 monthly snapshots. Features use only data before each snapshot date.
-   - Validation: out-of-time, compared against a recency rule and the statistical model. Calibration and permutation importance are stored in the database.
-   - Warning threshold: 30%. On the hold-out, parts scored at or above it were needed **74%** of the time (753 parts), against a 7.1% base rate. AUC 0.895.
+## Results
 
-### Optimization engine (src/lib/engine.ts)
-- Lead-time demand distribution: Poisson for slow movers, normal otherwise. Lead time mean and variability come from PR → PO delivery.
-- Safety stock, reorder point (= Min), EOQ order quantity, Max = Min + Q.
-- For each part, the service level is chosen to minimize **holding + ordering + downtime-risk cost**. The engine also checks whether not stocking the part at all is cheaper.
-- The probability that a stockout stops production is **calibrated from the data**: today's static Min–Max must reproduce the Emergency notifications observed per year.
-- Downtime per stockout is the expedited delivery time: the 10th-percentile lead time of the part's category in PR PO.
-- The emergency price premium defaults to 0%, because short-notice PRs in the data were paid the median price (ratio 1.000).
-- **Identical stock first.** 133 groups of material numbers share an identical description and unit (597 numbers). In 66 of these groups, one number is at zero stock while another holds stock. Before buying, a need is covered by a twin's stock held above that twin's own reorder point. These transfers show up as the **Transfer** action.
-- **Turnaround reserve and readiness.**
-  - Detecting the last turnaround: turnaround-type orders appear in every month. The turnaround itself is the run of months where their issue lines exceed 3× the monthly median (Nov 2025 – Jan 2026: 360 parts). That window is the last turnaround.
-  - Reserve: parts in that scope keep the quantity they used, so they are never reduced as "slow-moving" before the next turnaround.
-  - Readiness check: the Maintenance workspace checks readiness for a planner-chosen date. Order-by = start date minus the P80 lead time.
-- "Convert to Stock Item" is only proposed when the part was used in 2+ months or has a planned job.
+All results come from the organisers' dummy baseline data (snapshot 1 Oct 2026).
 
-### Safety and governance rules (src/lib/rules.ts)
-- **Safety-critical element (SCE).** A part installed on a FuncLoc tagged `PRV-` (safety / pressure-relief valve) or `SDV-` (shutdown valve): 860 parts on 1,040 locations. 578 of those locations are rated S in the FuncLoc list, so criticality alone would under-protect them. An SCE part:
-  - is costed with class-A downtime risk,
-  - always keeps at least one spare,
-  - is never marked "potentially obsolete",
-  - can be reduced only above that floor, with Management sign-off.
-  - In a live plant the SCE register replaces the tag rule.
-- **Long-lead.** A critical part (A/B or SCE) whose 80th-percentile lead time on its own POs exceeds 90 days. Category estimates do not count. The reason text gives the fastest delivery seen in its category: emergency buying cannot prevent downtime, so plan ahead or hold a capital spare.
-- **Management sign-off.** Buys above Rp 1 B, and reductions above Rp 1 B or of any SCE part, wait in the Management **Pending approval** list. They reach the PR draft or count as released capital only after sign-off. The limit is a delegation-of-authority rule, so it is fixed in `rules.ts` rather than offered as a scenario slider.
-- **Decision log.** Every approve, reject, undo and sign-off is appended with role, time, quantity, value and the system's reason. It is shown in the Management workspace and exportable to CSV.
-- **Master-data work list** (Data & Method page, `GET /api/master-data?format=csv`). One list for the SAP master-data team:
-  - duplicate-number candidates,
-  - Non Stock parts with repeated demand,
-  - Stock Items the policy would buy on demand,
-  - Non Stock parts that hold stock.
-  - These are candidates to check, not automatic changes.
+**Warehouse replay.** The Sparely policy is rebuilt from data before **1 May 2026** only. Actual demand from May to September 2026 is then replayed day by day through two virtual warehouses with the same lead times and safety rules: one runs today's static Min–Max, the other the Sparely policy.
 
-### Proof by replay (src/lib/replay.ts)
-The Sparely policy is rebuilt from data before 1 May 2026 only. The actual May–Sep 2026 issues are then replayed day by day through two warehouses: one runs today's static Min–Max, the other the Sparely policy. Both use the same lead times and safety rules, and each starts at its own policy's Max. The replay re-runs under the active scenario. Results are on the Management workspace and the Scenario page, and through `GET /api/replay`.
-- Inventory position = on hand + open POs (PO delivery date after the planning date).
+| Metric | Current Min–Max | Sparely | Change |
+| --- | --- | --- | --- |
+| Demand days fully served | 68.6% | 93.1% | +24.5 pts |
+| Stockout events | 952 | 209 | **−78%** |
+| Stockouts on critical parts (A/B) | 878 | 127 | **−86%** |
+| Average stock value held | Rp 986.4 bn | Rp 455.9 bn | **−54%** |
 
-## Run locally
+**Forecast backtest** (train May 2025 – Apr 2026, test May – Sep 2026):
+
+| Method | WAPE | Bias | AUC |
+| --- | --- | --- | --- |
+| Static average (current practice) | 1.336 | +115.0% | 0.769 |
+| Croston SBA (classical intermittent) | 0.963 | +57.7% | 0.763 |
+| **Sparely hybrid model** | 0.998 | **+9.5%** | **0.778** |
+
+**ML early warning** (out-of-time test): AUC **0.895**; parts scored at or above the 30% warning threshold were actually needed **74%** of the time, against a 7.1% base rate.
+
+**Other impact:** Rp 573.3 bn of excess stock can be released (PO prices only); 77 needs covered by identical stock (Rp 2.2 bn not bought); 860 safety-critical parts protected; 265 Non Stock parts recommended to become Stock Items.
+
+> Replay results compare two policies from their own starting points, because historical stock levels are not in the data. Stockouts are simulated, not observed. Full details: [docs/03-optimization-engine.md](docs/03-optimization-engine.md).
+
+---
+
+## How the Numbers Are Calculated
+
+The machine-learning model ranks which parts to watch. **Every number behind a stocking decision comes from a formula that can be checked** in `src/lib/engine.ts`.
+
+| Calculation | Formula |
+| --- | --- |
+| Failure-driven demand rate | `λ = c × λ_observed + (1 − c) × κ × E`, with credibility `c = n / (n + 2)` and installed-base exposure `E` |
+| Daily demand | `μ = λ × z` (z = mean quantity per issue) |
+| Lead-time demand | `μ_L = μ × L + planned demand within L` |
+| Reorder point (Min) | `ROP = μ_L + Φ⁻¹(SL) × σ_L` (Poisson quantile for slow movers) |
+| Safety stock | `SS = ROP − μ_L` |
+| Order quantity | `Q = √(2 × D × K / (h × P))`, bounded between one month and one year of demand |
+| Max | `Max = ROP + Q` |
+| Total cost per service level | `h × P × (SS + Q/2) + K × D / Q + stockouts/year × p_downtime × C_day × T_emergency` |
+| Downtime probability calibration | Today's Min–Max must reproduce the 98.9 Emergency notifications per year in the data → A 1.07%, B 0.53%, C 0.16%, S 0.05% |
+
+---
+
+## AI Models
+
+| Model | Purpose | Method | Validation |
+| --- | --- | --- | --- |
+| Demand forecast | How much each part will need | Cause-based hybrid: planned maintenance + recency-weighted compound Poisson + installed-base prior + turnaround separation | Backtest on May–Sep 2026 vs static average and Croston SBA |
+| ML early warning | Which parts will be needed in 90 days | `HistGradientBoostingClassifier` (scikit-learn), 20 features on part history, equipment, maintenance schedule, purchasing and category | Out-of-time test on 14,962 part-months; AUC 0.895, calibrated |
+| Abnormal-use detection | Remove spikes before forecasting | Robust z-score (MAD) | Logged in data quality |
+
+Training runs offline in `pipeline/` and writes results to `data/caliber.db`. The app reads the database and runs the optimization engine on every request. Full details: [docs/02-forecast-and-ml.md](docs/02-forecast-and-ml.md).
+
+**AI research repository:** early data and model experiments by our AI engineer (data cleaning, duplicate-material detection, lead-time quantile models, demand classification) are kept in **[sparepart-optimizer](https://github.com/narazla/sparepart-optimizer)**. The final numbers shown in the app and the deck come from **this** repository (Sparely), not from the research repository.
+
+> **Note:** the baseline data is dummy SAP data from the organisers. Models are not yet validated on real plant data; validation is part of the pilot.
+
+---
+
+## Safety & Governance
+
+| Principle | What is implemented |
+| --- | --- |
+| Process safety | Parts on `PRV-` (safety valve) and `SDV-` (shutdown valve) locations are Safety-Critical Elements: class-A risk, at least one spare, never marked potentially obsolete |
+| Delegation of authority | Buys or reductions above Rp 1 billion, and any reduction of a safety-critical part, go to *Pending approval* and need management sign-off |
+| Audit trail | Every approve, reject, undo and sign-off is logged with role, time, quantity, value and reason; exportable as CSV |
+| Human in the loop | Sparely recommends; people approve. Nothing is written to the ERP automatically |
+| Explainability | Every recommendation carries numbered reasons (forecast, lead time, service level, risk, twins, ML warning) |
+| Transparent assumptions | All assumptions are listed on the Data & Method page with a live sensitivity table (halving or doubling them changes at most ~5% of actions) |
+| Master-data governance | A worklist for the SAP team: duplicate numbers, Non Stock parts that should be stocked, Stock Items that should not, Non Stock parts holding stock |
+
+Full details: [docs/04-safety-and-governance.md](docs/04-safety-and-governance.md).
+
+---
+
+## Documentation
+
+| Document | Content |
+| --- | --- |
+| [01 · Data and Cleaning](docs/01-data-and-cleaning.md) | The six files, how they connect, data facts, every data-quality check |
+| [02 · Forecast and ML](docs/02-forecast-and-ml.md) | Demand by cause, installed-base prior, backtest, ML early warning |
+| [03 · Optimization Engine](docs/03-optimization-engine.md) | Cost–risk optimization, downtime calibration, actions, health status, turnaround readiness, replay |
+| [04 · Safety and Governance](docs/04-safety-and-governance.md) | SCE, long-lead, sign-off, decision log, master-data worklist, sensitivity |
+| [05 · Demo Script](docs/05-demo-script.md) | Four-minute demo flow, firebrick walk-through, likely jury questions |
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+| --- | --- |
+| Data pipeline & ML | Python, pandas, NumPy, openpyxl, scikit-learn |
+| Database | SQLite (`data/caliber.db`, 26 tables) |
+| Web app | Next.js 15 (App Router), React 19, TypeScript |
+| Database access | better-sqlite3 (read-only) |
+| UI | Tailwind CSS 4, Recharts, lucide-react |
+| Hosting | Vercel (Node 22) |
+
+```text
+6 SAP extracts (xlsx)
+      │  pipeline/build_db.py · pipeline/ml_model.py
+      ▼   clean → link → demand features → forecast → backtest → ML early warning
+data/caliber.db (SQLite, 26 tables)
+      │  better-sqlite3 (read-only)
+      ▼
+src/lib/engine.ts · rules.ts · replay.ts · workflow.ts   (all parts re-optimize in well under a second)
+      │
+      ▼
+Next.js workspaces + JSON API  →  Vercel
+```
+
+---
+
+## Project Structure
+
+```text
+sparely/
+├── pipeline/
+│   ├── config.py          # every pipeline assumption
+│   ├── build_db.py        # cleaning, linking, forecast, backtest, turnaround, identical parts
+│   └── ml_model.py        # ML early warning
+├── data/
+│   └── caliber.db         # SQLite database
+├── docs/                  # detailed documentation
+├── src/
+│   ├── lib/
+│   │   ├── engine.ts      # stock optimization and action rules
+│   │   ├── rules.ts       # safety & governance rules (SCE, long-lead, sign-off)
+│   │   ├── replay.ts      # warehouse replay
+│   │   ├── workflow.ts    # readiness, PR draft, impact, master-data list
+│   │   └── params.ts      # default business assumptions
+│   ├── app/               # pages and API routes
+│   └── components/        # UI, charts, decision storage
+├── scripts/               # engine sanity check, submission zip
+└── raw-data/              # organiser Excel files (submission zip only)
+```
+
+---
+
+## Run Locally
+
+### Prerequisites
+
+1. **Node.js 22+**
+2. **Python 3.11+** (only to rebuild the database)
+
+### Install and run
 
 ```bash
-# 1) (optional) rebuild the database from the raw Excel files
-pip install -r pipeline/requirements.txt
-npm run build:data           # writes data/caliber.db
+git clone https://github.com/narazla/Sparely
+cd Sparely
 
-# 2) web app
+# (optional) rebuild the database from the raw Excel files
+pip install -r pipeline/requirements.txt
+npm run build:data          # writes data/caliber.db
+
+# web app
 npm install
-npm run dev                  # http://localhost:3000
+npm run dev                 # http://localhost:3000
 ```
 
-Node 22 is required (`engines` in package.json). The SQLite database is committed in `data/caliber.db`, so step 1 is only needed after changing the data or assumptions in `pipeline/config.py`.
+The SQLite database is committed in `data/caliber.db`, so the rebuild step is only needed after changing the data or `pipeline/config.py`.
 
-## Deploy to Vercel
+### Deploy to Vercel
 
-Live MVP: **https://sparely-omega.vercel.app** (production deployment of 4 Nov 2026).
+**Live MVP:** https://sparely-caliber2026.vercel.app (production deployment of 4 Nov 2026)
 
 ```bash
 npx vercel login
 npx vercel --prod
 ```
 
-`next.config.ts` ships `data/caliber.db` with every serverless function, and keeps `better-sqlite3` as an external native module.
+`next.config.ts` ships `data/caliber.db` with every serverless function and keeps `better-sqlite3` as an external native module.
+
+---
 
 ## JSON API
 
 | Endpoint | Description |
-|---|---|
+| --- | --- |
 | `GET /api/summary` | Portfolio KPIs, health and action counts, safety and governance counts |
 | `GET /api/recommendations?action=&health=&crit=A,B&tag=sce\|longlead\|signoff&q=&sort=&limit=` | Per-part recommendations (`&format=csv` to export) |
 | `GET /api/materials/{materialNo}` | Full detail, forecast, cost curve |
 | `GET /api/forecast` | Aggregate forecast, demand classes, backtest |
-| `POST /api/scenario` `{ "params": {...} }` | Re-optimize every part for a cost–risk scenario |
-| `POST /api/pr-draft` `{ "items": [{ "material_no", "qty", "need_by"? }] }` | Purchase-requisition lines from approved buys |
-| `POST /api/impact` `{ "decisions": [...] }` | Spend committed, purchases avoided by transfers, capital released, downtime risk removed, decisions awaiting sign-off |
-| `GET /api/replay` | May–Sep 2026 replay: today's Min–Max vs the Sparely policy |
+| `POST /api/scenario` | Re-optimize every part for a cost–risk scenario |
+| `POST /api/pr-draft` | Purchase-requisition lines from approved buys |
+| `POST /api/impact` | Spend committed, transfers, capital released, downtime risk removed, decisions awaiting sign-off |
+| `GET /api/replay` | May–Sep 2026 warehouse replay |
 | `GET /api/data-quality` | Data-quality checks, assumptions, calibration |
-| `GET /api/master-data` | Master-data work list summary (`?format=csv` for every row) |
+| `GET /api/master-data` | Master-data worklist (`?format=csv` for every row) |
 
-## Assumptions
+---
 
-All assumptions are listed in three places, and all are shown on the **Data & Method** page:
-- `pipeline/config.py` (pipeline),
-- `src/lib/params.ts` (scenario defaults),
-- `src/lib/rules.ts` (safety and governance rules).
+## Roadmap
 
-The ones not confirmed by the organizers are:
+| Phase | Focus |
+| --- | --- |
+| 1. Pilot | One unit (e.g. the cracker): prove fewer critical stockouts and capital released |
+| 2. Plant-wide | All units, integrated with turnaround planning |
+| 3. ERP integration | Write PR drafts and Min–Max changes back to SAP; role-based login |
+| 4. Multi-site & cold start | Share critical spares across sites; initial stock for new plants from the installed-base prior |
 
-- the order-type meaning of the order-number prefixes
-- the PR-type labels
-- FX rates
-- the SCE tag rule (PRV-/SDV-) standing in for an SCE register
-- production loss per downtime day by criticality
-- the holding-cost rate
-- the cost per purchase order
+**Proposed additional data:** maintenance task lists (SAP PM), standard material prices (SAP MM), production value per hour, stock and reservation history, approved vendor lists, functional-location hierarchy, and the official SCE register.
 
-The last three cannot come from the baseline data. The Data & Method page shows a live sensitivity table for halving or doubling them.
+---
 
-## Project layout
+## Known Limitations
 
-```
-pipeline/       Python data pipeline (config.py = every assumption)
-data/           caliber.db (SQLite)
-src/lib/        db access, engine, rules, stats, params, data queries
-src/app/        pages and API routes
-src/components/ UI and charts
-scripts/        engine sanity check, submission zip
-raw-data/       organizer Excel files (in the submission zip only)
-```
+- The baseline data is **dummy**; some values are unrealistic (e.g. hundreds of governor valves in stock).
+- Historical stock levels and unmet demand are not recorded, so replay stockouts are **simulated**.
+- The maintenance plan does not list parts; planned demand is derived from the BoM with a calibrated usage factor (0.716).
+- 6,231 parts have no PO price; their prices are category estimates and labelled as such. Use PO-price figures (Rp 627.0 bn stock, Rp 573.3 bn excess) for rupiah claims.
+- Every part has a single supplier, so supply risk can be flagged but not re-routed.
+- The SCE list is derived from functional-location tags, not an official SCE register; the one-spare minimum is a starting rule.
+- Order-type prefixes, PR-type labels, FX rates, production loss per downtime day, holding-cost rate and cost per PO are assumptions not confirmed by the organisers; the effect of the last three is shown in the sensitivity table.
+- No login in the prototype; decisions and the decision log are stored in the browser (a shared database in the pilot).
+
+---
+
+## Team
+
+<table>
+<tr>
+<td align="center" width="33%">
+<img src="https://drive.google.com/uc?export=view&id=1rPzNkUuXtFebZFcrLa7c-ZtZlSnxa0jX" width="144" height="180"/><br/>
+<a href="https://github.com/narazla"><b>Nazla Azzahra Hermana</b></a><br/>
+<i>Universitas Diponegoro</i>
+</td>
+<td align="center" width="33%">
+<img src="https://drive.google.com/uc?export=view&id=17tsQGhSL0nE_PWdDJ9LUZegHQzS7W9eL" width="144" height="180"/><br/>
+<b>Syahla Sandiani</b><br/>
+<i>Universitas Diponegoro</i>
+</td>
+<td align="center" width="33%">
+<img src="https://drive.google.com/uc?export=view&id=16NG99UA9v0ajBxlowiNahmoyUJe4Zr2S" width="144" height="180"/><br/>
+<b>Helmi Abdulbaqi</b><br/>
+<i>Universitas Diponegoro</i>
+</td>
+</tr>
+</table>
+
+---
+
+Built for **CALIBER 2026 — Final Case 3: Spare Part Intelligence & Inventory Optimization**
