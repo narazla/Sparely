@@ -1,22 +1,26 @@
-# Sparely — Spare Part Intelligence & Inventory Optimization
-
 <div align="center">
+<img src="https://drive.google.com/uc?export=view&id=1hSMpvq_VcluTXwjKLZu6hF80JOFOZ7k4" alt="Sparely logo" width="120"/>
 
-*Just enough, just in time.*
+### Sparely
+*Just Enough, Just In Time.*
+
+AI-Powered Platform for Spare Part Intelligence & Inventory Optimization
+</div>
 
 <br>
 
-<img src="public/sparely-logo.png" alt="Sparely" width="60%" />
+<img src="https://drive.google.com/uc?export=view&id=1cqXfZh5g_QAbN33R7IV_xu87H47EWQHA" alt="Sparely banner" width="100%"/>
+<br>
 
-<br><br>
+<div align="center">
 
-**[Live Demo](https://sparely-caliber2026.vercel.app)** · **[AI Research Repository](https://github.com/narazla/sparepart-optimizer)** · **[Documentation](docs/)**
+**[Live Demo](https://sparely-caliber2026.vercel.app)** · **[AI Research Repository](https://github.com/narazla/sparepart-optimizer)** · **[Documentation](#documentation)**
 
 </div>
 
 <br>
 
-Sparely is a web platform for maintenance, inventory, procurement and management teams at a petrochemical plant. It reads six SAP-style extracts, forecasts every spare part's demand by its cause (planned maintenance, equipment failure, turnaround), warns early which parts will be needed with a machine-learning model, and recalculates each part's Min, Max and safety stock by weighing holding cost against downtime risk. The result is not a dashboard but a worklist: one decision per part (reorder, transfer, reduce, monitor or maintain) that flows from the planner to procurement to management.
+**Sparely** helps maintenance, inventory, procurement and management teams at a petrochemical plant keep the right spare parts in stock. It reads six SAP-style extracts, forecasts every spare part's demand by its cause (planned maintenance, equipment failure, turnaround), warns early which parts will be needed with a machine-learning model, and recalculates each part's Min, Max and safety stock by weighing holding cost against downtime risk. The result is not a dashboard but a worklist: one decision per part (reorder, transfer, reduce, monitor or maintain) that flows from the planner to procurement to management.
 
 > *"Most tools forecast what you used. Sparely prepares you for what's coming — and proves it."*
 
@@ -166,13 +170,13 @@ Full details: [docs/04-safety-and-governance.md](docs/04-safety-and-governance.m
 
 ## Documentation
 
-| Document | Content |
-| --- | --- |
-| [01 · Data and Cleaning](docs/01-data-and-cleaning.md) | The six files, how they connect, data facts, every data-quality check |
-| [02 · Forecast and ML](docs/02-forecast-and-ml.md) | Demand by cause, installed-base prior, backtest, ML early warning |
-| [03 · Optimization Engine](docs/03-optimization-engine.md) | Cost–risk optimization, downtime calibration, actions, health status, turnaround readiness, replay |
-| [04 · Safety and Governance](docs/04-safety-and-governance.md) | SCE, long-lead, sign-off, decision log, master-data worklist, sensitivity |
-| [05 · Demo Script](docs/05-demo-script.md) | Four-minute demo flow, firebrick walk-through, likely jury questions |
+Additional project documentation is available in `docs/`:
+
+* [Data and cleaning](https://github.com/narazla/Sparely/blob/main/docs/01-data-and-cleaning.md)
+* [Forecast and ML early warning](https://github.com/narazla/Sparely/blob/main/docs/02-forecast-and-ml.md)
+* [Optimization engine and replay proof](https://github.com/narazla/Sparely/blob/main/docs/03-optimization-engine.md)
+* [Safety and governance](https://github.com/narazla/Sparely/blob/main/docs/04-safety-and-governance.md)
+* [Demo script](https://github.com/narazla/Sparely/blob/main/docs/05-demo-script.md)
 
 ---
 
@@ -314,7 +318,7 @@ npx vercel --prod
 <tr>
 <td align="center" width="33%">
 <img src="https://drive.google.com/uc?export=view&id=1rPzNkUuXtFebZFcrLa7c-ZtZlSnxa0jX" width="144" height="180"/><br/>
-<a href="https://github.com/narazla"><b>Nazla Azzahra Hermana</b></a><br/>
+<b>Nazla Azzahra</b><br/>
 <i>Universitas Diponegoro</i>
 </td>
 <td align="center" width="33%">
